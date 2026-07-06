@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python（后端）
+__pycache__/
+*.pyc
+backend/.venv/
+backend/venv/
+
+# Chroma 持久化数据（每次重新生成即可，不用提交，几百 MB）
+backend/chroma_db/
