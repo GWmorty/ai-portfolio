@@ -1,0 +1,27 @@
+# docker-compose.yml
+# AI 求职作品集 Docker 编排
+# 用法：docker-compose up -d（后台启动）/ docker-compose down（停止）
+
+version: "3.8"
+
+services:
+  # 后端服务：FastAPI + LangGraph Agent
+  backend:
+    build: ./backend
+    container_name: ai-portfolio-backend
+    ports:
+      - "8000:8000" # 主机 8000 → 容器 8000（Nginx 代理到这里）
+    env_file:
+      - ./backend/.env # API Keys 从 .env 注入（不进镜像）
+    volumes:
+      - chroma_data:/root/.ai_portfolio # ChromaDB 持久化（容器重启数据不丢）
+    restart: unless-stopped # 崩溃自动重启
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# 数据卷（持久化 ChromaDB）
+volumes:
+  chroma_data:

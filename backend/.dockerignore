@@ -1,0 +1,29 @@
+# Docker 构建时忽略这些文件（不打包进镜像）
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# 环境变量（密钥不能进镜像！运行时通过 env_file 注入）
+.env
+
+# ChromaDB 数据（运行时通过 volume 持久化）
+chroma_db/
+
+# 日志
+*.log
+uvicorn*.log
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# 测试文件
+test_*.py
