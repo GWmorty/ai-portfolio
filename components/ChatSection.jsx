@@ -24,6 +24,10 @@ export default function ChatSection() {
   const [input, setInput] = useState("");
   // 是否正在等待 AI 回复
   const [loading, setLoading] = useState(false);
+  // ⭐ 每个访客独立的 session_id（支持多轮对话记忆）
+  const [sessionId] = useState(
+    () => `hr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  );
 
   // 发送消息
   const sendMessage = async (question = null) => {
@@ -46,7 +50,7 @@ export default function ChatSection() {
       const response = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: text }),
+        body: JSON.stringify({ question: text, session_id: sessionId }),
       });
 
       if (!response.ok) throw new Error(`API 错误: ${response.status}`);
