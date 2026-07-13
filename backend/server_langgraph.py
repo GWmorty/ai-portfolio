@@ -17,6 +17,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
+from langgraph.checkpoint.memory import MemorySaver  # ⭐ Memory 模块
 
 # RAG 相关
 import chromadb
@@ -147,9 +148,9 @@ workflow.add_edge(START, "agent")
 workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
 workflow.add_edge("tools", "agent")  # 工具执行完回到 agent（循环）
 
-print("初始化 LangGraph Agent...")
-agent_graph = workflow.compile()
-print("LangGraph Agent 就绪！\n")
+print("初始化 LangGraph Agent（含 Memory）...")
+agent_graph = workflow.compile(checkpointer=MemorySaver()) # ⭐ 加 checkpointer
+print("LangGraph Agent 就绪（支持多轮对话）！\n")
 
 
 # ========== FastAPI 应用 ==========
@@ -169,6 +170,7 @@ app.add_middleware(
 
 class AskRequest(BaseModel):
     question: str
+    session_id: str = "default"  # ⭐ 标识对话（相同 = 同一对话，有记忆）
 
 
 class AskResponse(BaseModel):
@@ -178,13 +180,15 @@ class AskResponse(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "agent": "LangGraph", "model": "deepseek-chat"}
+    return {"status": "ok", "agent": "LangGraph + Memory", "model": "deepseek-chat"}
 
 
 @app.post("/ask", response_model=AskResponse)
 def ask_endpoint(request: AskRequest):
-    result = agent_graph.invoke({
-        "messages": [HumanMessage(content=request.question)]
-    })
+    # ⭐ 传 thread_id 让 Agent 记住同一 session 的对话历史
+    result = agent_graph.invoke(
+        {"messages": [HumanMessage(content=request.question)]},
+        config={"configurable": {"thread_id": request.session_id}},
+    )
     answer = result["messages"][-1].content
     return AskResponse(answer=answer, agent_used=True)
