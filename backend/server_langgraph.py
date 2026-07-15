@@ -201,16 +201,16 @@ def ask_endpoint(request: AskRequest):
 async def ask_stream(request: AskRequest):
     """SSE 流式输出——前端逐字显示"""
     async def generate():
-        async for event in agent_graph.astream_events(
+        async for chunk in agent_graph.astream(
             {"messages": [HumanMessage(content=request.question)]},
             config={"configurable": {"thread_id": request.session_id}},
-            version="v2",
+            stream_mode="messages",
         ):
-            # 只输出 LLM 生成的文本块（跳过工具调用等中间步骤）
-            if event["event"] == "on_chat_model_stream":
-                chunk = event["data"]["chunk"]
-                if chunk.content:
-                    yield f"data: {json.dumps({'content': chunk.content}, ensure_ascii=False)}\n\n"
+            # chunk 是 (message, metadata) 元组
+            msg = chunk[0]
+            # 只输出 LLM 生成的文本（过滤工具调用等）
+            if hasattr(msg, "content") and isinstance(msg.content, str) and msg.content:
+                yield f"data: {json.dumps({'content': msg.content}, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
