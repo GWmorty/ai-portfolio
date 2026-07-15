@@ -1,6 +1,6 @@
 # server_langgraph.py
-# LangGraph 版 FastAPI 服务：白盒 Agent（完全可控）
-# 对比 server_agent.py（create_agent 黑盒）→ 启动：uvicorn server_langgraph:app --port 8000
+# LangGraph 版 FastAPI 服务：白盒 Agent（完全可控）+ 流式输出
+# 启动：uvicorn server_langgraph:app --port 8000
 
 import os
 import requests
@@ -9,7 +9,9 @@ from typing import TypedDict, Annotated
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+import json
 
 from langchain_openai import ChatOpenAI
 from langchain.tools import tool
@@ -192,3 +194,23 @@ def ask_endpoint(request: AskRequest):
     )
     answer = result["messages"][-1].content
     return AskResponse(answer=answer, agent_used=True)
+
+
+# ⭐ 流式端点：逐字返回 AI 回答（像 ChatGPT 打字机效果）
+@app.post("/ask/stream")
+async def ask_stream(request: AskRequest):
+    """SSE 流式输出——前端逐字显示"""
+    async def generate():
+        async for event in agent_graph.astream_events(
+            {"messages": [HumanMessage(content=request.question)]},
+            config={"configurable": {"thread_id": request.session_id}},
+            version="v2",
+        ):
+            # 只输出 LLM 生成的文本块（跳过工具调用等中间步骤）
+            if event["event"] == "on_chat_model_stream":
+                chunk = event["data"]["chunk"]
+                if chunk.content:
+                    yield f"data: {json.dumps({'content': chunk.content}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
