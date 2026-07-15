@@ -41,14 +41,11 @@ export default function ChatSection() {
     setLoading(true);
 
     try {
-      // 2. 调流式端点（SSE 逐字输出，像 ChatGPT 打字机效果）
+      // 2. 调 Agent 后端（LangGraph Agent：RAG + GitHub API + Memory）
       const API_URL =
         process.env.NODE_ENV === "development"
-          ? "http://localhost:8000/ask/stream"
-          : "/api/ask/stream";
-
-      // 先添加空的 AI 消息（等待逐字填充）
-      setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+          ? "http://localhost:8000/ask"
+          : "/api/ask";
 
       const response = await fetch(API_URL, {
         method: "POST",
@@ -58,38 +55,13 @@ export default function ChatSection() {
 
       if (!response.ok) throw new Error(`API 错误: ${response.status}`);
 
-      // ⭐ 流式读取：逐字追加到 AI 消息
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let aiText = "";
+      const data = await response.json();
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n");
-
-        for (const line of lines) {
-          if (line.startsWith("data: ") && !line.includes("[DONE]")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.content) {
-                aiText += data.content;
-                // 逐字更新最后一条消息
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  updated[updated.length - 1] = {
-                    role: "assistant",
-                    content: aiText,
-                  };
-                  return updated;
-                });
-              }
-            } catch (e) {}
-          }
-        }
-      }
+      // 添加 AI 回复
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: data.answer },
+      ]);
     } catch (error) {
       // 网络失败 / 后端没启动 → 显示联系方式
       setMessages((prev) => [
