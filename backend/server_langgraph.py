@@ -15,7 +15,7 @@ import json
 
 from langchain_openai import ChatOpenAI
 from langchain.tools import tool
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessageChunk
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessageChunk, AIMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -210,9 +210,17 @@ async def ask_stream(request: AskRequest):
         ):
             # chunk 是 (message, metadata) 元组
             msg = chunk[0]
-            # 只透出 LLM 生成的 token（AIMessageChunk）。
-            # ToolMessage 也是 str content，但它是检索回来的原文，绝不能当作 AI 回复发给前端。
-            if isinstance(msg, AIMessageChunk) and isinstance(msg.content, str) and msg.content:
+            # 只透出 LLM 的「最终回答」文本：
+            #   - 排除 ToolMessage：检索回来的原文，不能当 AI 回复泄漏
+            #   - 排除带 tool_calls 的中间 AIMessage：“让我查一下…”这类前奏
+            #   - 兼容两种运行环境：
+            #       流式生效时 → 拿到 AIMessageChunk 增量（前端逐字）
+            #       流式不生效时 → 拿到整条 AIMessage（前端一次性显示）
+            #     （不同 langchain/langgraph 版本下 ainvoke 是否被拆成 chunk 行为不同）
+            is_ai = isinstance(msg, (AIMessageChunk, AIMessage))
+            has_text = isinstance(msg.content, str) and bool(msg.content)
+            no_tool_calls = not getattr(msg, "tool_calls", None)
+            if is_ai and has_text and no_tool_calls:
                 yield f"data: {json.dumps({'content': msg.content}, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
