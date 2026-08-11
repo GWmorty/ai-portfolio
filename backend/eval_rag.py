@@ -122,6 +122,12 @@ GOLDEN = [
     {"q": "你的优点和缺点是什么？",          "expect": {"faq.md"}},
     {"q": "我们为什么应该录用你？",          "expect": {"faq.md"}},
     {"q": "你的期望薪资是多少？",            "expect": {"faq.md", "job-target.md"}},
+    {"q": "你为什么从上一份工作离职？",      "expect": {"faq.md", "work-experience.md"}},
+    {"q": "你这段空窗期在做什么？",          "expect": {"faq.md", "work-experience.md"}},
+    {"q": "你的抗压能力怎么样？",            "expect": {"faq.md"}},
+    {"q": "你能接受加班吗？",                "expect": {"faq.md"}},
+    {"q": "你什么时候能入职？",              "expect": {"faq.md"}},
+    {"q": "你有什么想问我的？",              "expect": {"faq.md"}},
 ]
 
 
