@@ -1,14 +1,19 @@
 # 范睿峰 AI 求职助手 - Python 依赖清单
 # 用法：pip install -r requirements.txt
+#
+# ⚠️ 全部用 == 精确锁定版本。
+# 原因：曾经用 >= 导致本地(py3.14)和 Docker(py3.10)装到不同版本，
+# langchain-core / langgraph 的流式行为在版本间有差异，造成"本地能跑、线上坏"。
+# 升级任一依赖前，先在本地充分验证，改这里的 ==，再重新部署。
 
-fastapi>=0.110.0          # Web 框架
-uvicorn[standard]>=0.27.0 # ASGI 服务器（运行 FastAPI）
-openai>=1.0.0             # OpenAI SDK（兼容 DeepSeek/硅基流动）
-python-dotenv>=1.0.0      # 从 .env 加载环境变量
-chromadb>=0.5.0           # 向量数据库（持久化 embedding）
-numpy>=1.26.0             # 数值计算（向量运算）
-langchain>=1.0.0          # Agent 框架
-langchain-openai>=0.3.0   # LangChain 的 OpenAI/DeepSeek 集成
-langchain-core>=1.0.0     # LangChain 核心
-langgraph>=0.4.0          # LangGraph（白盒 Agent + Memory）
-requests>=2.31.0          # HTTP 请求（GitHub API 等）
+fastapi==0.141.1          # Web 框架
+uvicorn[standard]==0.52.1 # ASGI 服务器（运行 FastAPI）
+openai==2.53.0            # OpenAI SDK（兼容 DeepSeek/硅基流动）
+python-dotenv==1.2.2      # 从 .env 加载环境变量
+chromadb==1.5.9           # 向量数据库（持久化 embedding）
+numpy==2.2.6              # 数值计算（向量运算）
+langchain==1.3.14         # Agent 框架
+langchain-openai==1.4.3   # LangChain 的 OpenAI/DeepSeek 集成
+langchain-core==1.5.3     # LangChain 核心（流式行为敏感，务必锁死）
+langgraph==1.2.10         # LangGraph（白盒 Agent + Memory）
+requests==2.34.2          # HTTP 请求（GitHub API 等）
