@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 
 // 快捷问题（HR 一键点击填入输入框）
 const QUICK_QUESTIONS = [
@@ -17,61 +17,98 @@ const WELCOME_MESSAGE = {
     "你好！我是范睿峰的 AI 求职助手。想了解我的技能、项目、工作经历或求职方向吗？直接问吧！",
 };
 
+// 后端兜底联系方式（流式出错时显示）
+const FALLBACK_TEXT =
+  "抱歉，AI 助手暂时无法响应。请直接联系范睿峰：\n\n📞 18021080437\n📧 2413824669@qq.com";
+
 export default function ChatSection() {
   // 对话历史
   const [messages, setMessages] = useState([WELCOME_MESSAGE]);
   // 输入框内容
   const [input, setInput] = useState("");
-  // 是否正在等待 AI 回复
+  // 是否正在等待 / 接收 AI 回复
   const [loading, setLoading] = useState(false);
   // ⭐ 每个访客独立的 session_id（支持多轮对话记忆）
   const [sessionId] = useState(
     () => `hr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   );
+  // 自动滚动到底部
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [messages]);
 
-  // 发送消息
+  // 发送消息（流式：逐字渲染 AI 回复）
   const sendMessage = async (question = null) => {
-    // 没输入或正在 loading，忽略
     const text = (question || input).trim();
     if (!text || loading) return;
 
-    // 1. 添加用户消息
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
+    // 1. 添加用户消息 + 一条空的 AI 消息（后续 token 往里 append）
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: text },
+      { role: "assistant", content: "" },
+    ]);
     setInput("");
     setLoading(true);
 
-    try {
-      // 2. 调 Agent 后端（LangGraph Agent：RAG + GitHub API + Memory）
-      const API_URL =
-        process.env.NODE_ENV === "development"
-          ? "http://localhost:8000/ask"
-          : "/api/ask";
+    const API_URL =
+      process.env.NODE_ENV === "development"
+        ? "http://localhost:8000/ask/stream"
+        : "/api/ask/stream";
 
+    try {
       const response = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: text, session_id: sessionId }),
       });
-
       if (!response.ok) throw new Error(`API 错误: ${response.status}`);
 
-      const data = await response.json();
+      // 2. 用 reader 读取 SSE 流
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
 
-      // 添加 AI 回复
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: data.answer },
-      ]);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE 事件之间用空行分隔；最后一段可能不完整，留着下次拼
+        const events = buffer.split("\n\n");
+        buffer = events.pop();
+
+        for (const evt of events) {
+          const line = evt.trim();
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (payload === "[DONE]") continue;
+          try {
+            const { content } = JSON.parse(payload);
+            if (content) {
+              // 3. 把 token 追加到最后一条 AI 消息
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                next[next.length - 1] = { ...last, content: last.content + content };
+                return next;
+              });
+            }
+          } catch {
+            // 忽略半截 JSON（理论上不会发生，留作兜底）
+          }
+        }
+      }
     } catch (error) {
-      // 网络失败 / 后端没启动 → 显示联系方式
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content:
-            "抱歉，AI 助手暂时无法响应。请直接联系范睿峰：\n\n📞 18021080437\n📧 2413824669@qq.com",
-        },
-      ]);
+      // 网络失败 / 后端没启动 → 在那条空 AI 消息里填兜底文案
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last.role === "assistant" && last.content === "") {
+          return [...prev.slice(0, -1), { role: "assistant", content: FALLBACK_TEXT }];
+        }
+        return [...prev, { role: "assistant", content: FALLBACK_TEXT }];
+      });
     } finally {
       setLoading(false);
     }
@@ -104,45 +141,44 @@ export default function ChatSection() {
         {/* 对话容器 */}
         <div className="bg-white rounded-2xl shadow-xl border border-gray-200 h-[520px] flex flex-col overflow-hidden">
           {/* 消息列表（可滚动） */}
-          <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex ${
-                  msg.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+            {messages.map((msg, i) => {
+              const isLast = i === messages.length - 1;
+              const showTypingDots =
+                msg.role === "assistant" && isLast && loading && msg.content === "";
+              return (
                 <div
-                  className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm md:text-base ${
-                    msg.role === "user"
-                      ? "bg-blue-600 text-white rounded-br-sm"
-                      : "bg-gray-100 text-gray-800 rounded-bl-sm"
+                  key={i}
+                  className={`flex ${
+                    msg.role === "user" ? "justify-end" : "justify-start"
                   }`}
                 >
-                  {/* whitespace-pre-wrap 保留换行符 */}
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
-                </div>
-              </div>
-            ))}
-
-            {/* Loading 动画（三个跳动小圆点） */}
-            {loading && (
-              <div className="flex justify-start">
-                <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-4">
-                  <div className="flex gap-1.5">
-                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
-                    <span
-                      className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                      style={{ animationDelay: "0.15s" }}
-                    ></span>
-                    <span
-                      className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                      style={{ animationDelay: "0.3s" }}
-                    ></span>
+                  <div
+                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm md:text-base ${
+                      msg.role === "user"
+                        ? "bg-blue-600 text-white rounded-br-sm"
+                        : "bg-gray-100 text-gray-800 rounded-bl-sm"
+                    }`}
+                  >
+                    {showTypingDots ? (
+                      <div className="flex gap-1.5 px-1 py-1">
+                        <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
+                        <span
+                          className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                          style={{ animationDelay: "0.15s" }}
+                        ></span>
+                        <span
+                          className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                          style={{ animationDelay: "0.3s" }}
+                        ></span>
+                      </div>
+                    ) : (
+                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                    )}
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })}
           </div>
 
           {/* 输入区域 */}
@@ -187,7 +223,7 @@ export default function ChatSection() {
 
         {/* 技术说明（小字） */}
         <p className="text-center text-xs text-gray-400 mt-6">
-          Powered by FastAPI + BGE-M3 + Chroma + DeepSeek API
+          Powered by LangGraph + BGE-M3 + Chroma + DeepSeek API（流式 SSE）
         </p>
       </div>
     </section>

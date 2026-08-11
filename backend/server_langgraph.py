@@ -15,7 +15,7 @@ import json
 
 from langchain_openai import ChatOpenAI
 from langchain.tools import tool
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessageChunk
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -127,11 +127,11 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
 
-def call_model(state: AgentState):
+async def call_model(state: AgentState):
     """节点 1：调 LLM（决定是否用工具）"""
     # 每次调用都加 SystemMessage（不存入 state，只用于 LLM 调用）
     messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
-    response = llm_with_tools.invoke(messages)
+    response = await llm_with_tools.ainvoke(messages)  # ⭐ async + ainvoke
     return {"messages": [response]}
 
 
@@ -187,9 +187,10 @@ def health():
 
 
 @app.post("/ask", response_model=AskResponse)
-def ask_endpoint(request: AskRequest):
-    # ⭐ 传 thread_id 让 Agent 记住同一 session 的对话历史
-    result = agent_graph.invoke(
+async def ask_endpoint(request: AskRequest):
+    # 节点 call_model 是 async def，必须用 ainvoke；用同步 invoke 会在
+    # LangGraph 1.x 报 TypeError: No synchronous function provided to "agent"
+    result = await agent_graph.ainvoke(
         {"messages": [HumanMessage(content=request.question)]},
         config={"configurable": {"thread_id": request.session_id}},
     )
@@ -209,8 +210,9 @@ async def ask_stream(request: AskRequest):
         ):
             # chunk 是 (message, metadata) 元组
             msg = chunk[0]
-            # 只输出 LLM 生成的文本（过滤工具调用等）
-            if hasattr(msg, "content") and isinstance(msg.content, str) and msg.content:
+            # 只透出 LLM 生成的 token（AIMessageChunk）。
+            # ToolMessage 也是 str content，但它是检索回来的原文，绝不能当作 AI 回复发给前端。
+            if isinstance(msg, AIMessageChunk) and isinstance(msg.content, str) and msg.content:
                 yield f"data: {json.dumps({'content': msg.content}, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
