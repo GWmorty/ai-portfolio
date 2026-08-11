@@ -1,8 +1,8 @@
 # backend/Dockerfile
 # 构建后端 Docker 镜像（Python + FastAPI + LangGraph）
 
-# 基础镜像：Python 3.10 精简版
-FROM python:3.10-slim
+# 基础镜像：Python 3.14 精简版（与本地开发环境对齐；3.10 将于 2026-10 EOL）
+FROM python:3.14-slim
 
 # 设置工作目录
 WORKDIR /app
