@@ -1,0 +1,42 @@
+# .github/workflows/deploy.yml
+# CI/CD：push 到 main 分支时自动 SSH 到服务器部署（后端 + 前端）
+#
+# 【原理】GitHub Actions 本身不碰 docker，只是通过 SSH 到服务器上执行命令；
+#        docker build / npm build 都在「服务器本地」跑，和手动部署完全一样。
+# 【前置】在 GitHub 仓库 Settings → Secrets and variables → Actions 里配 3 个：
+#        SERVER_HOST / SERVER_USER / SSH_PRIVATE_KEY
+# 【已知限制】backend/data/*.md 改动后需要手动重新入库（Chroma），CI 不会自动做。
+
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main  # 只有 push 到 main 才触发
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest  # GitHub 提供的临时 VM（用完销毁，不跑 docker）
+    steps:
+      - name: SSH 到服务器并部署
+        uses: appleboy/ssh-action@v1  # 社区 SSH Action
+        with:
+          host: ${{ secrets.SERVER_HOST }}       # 43.156.80.35
+          username: ${{ secrets.SERVER_USER }}   # ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}    # ~/.ssh/skeysingapore2026.pem 的完整内容
+          script: |
+            set -e
+            cd ~/ai-portfolio
+            git pull origin main
+
+            # ① 后端：重建容器（CMD=server_langgraph:app）
+            docker-compose up -d --build
+
+            # ② 前端：重新生成 out/（gitignore，必须本地 build；nvm 非交互 shell 要 source）
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            npm run build
+
+            # ③ 清理旧镜像，释放磁盘
+            docker image prune -f
+            echo "Deploy completed at $(date)"
