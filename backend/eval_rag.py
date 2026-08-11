@@ -11,6 +11,7 @@
 
 import os
 import sys
+import requests
 from dotenv import load_dotenv
 import chromadb
 from openai import OpenAI
@@ -39,18 +40,54 @@ def get_embedding(text):
     return r.data[0].embedding
 
 
-def retrieve(query, k=5):
-    """返回 [(meta, doc, similarity), ...]，按相似度从高到低"""
+def rerank(query, documents, top_n=None):
+    """调硅基流动 BGE-Reranker（cross-encoder）给文档重排。返回 [(orig_index, score), ...] 降序。"""
+    resp = requests.post(
+        "https://api.siliconflow.cn/v1/rerank",
+        headers={"Authorization": f"Bearer {os.getenv('SILICONFLOW_API_KEY')}"},
+        json={
+            "model": "BAAI/bge-reranker-v2-m3",
+            "query": query,
+            "documents": documents,
+            "return_top": top_n,
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return [(item["index"], item["relevance_score"]) for item in resp.json()["results"]]
+
+
+# 两阶段检索参数
+RECALL_K = 10   # bi-encoder 先召回 top-10
+RERANK_TOP = 5  # cross-encoder 重排后取前 5
+
+
+def retrieve(query, k=5, use_rerank=False):
+    """
+    返回 [(meta, doc, similarity), ...]，按相关性从高到低。
+    use_rerank=False: 纯 bi-encoder（原方案）
+    use_rerank=True:  两阶段——bi-encoder 召回 top-RECALL_K，再 BGE-Reranker 重排取前 RERANK_TOP
+    """
     emb = get_embedding(query)
+    fetch_k = RECALL_K if use_rerank else k
     res = collection.query(
-        query_embeddings=[emb], n_results=k,
+        query_embeddings=[emb], n_results=fetch_k,
         include=["documents", "metadatas", "distances"],
     )
+    base = list(zip(
+        res["metadatas"][0], res["documents"][0], [1.0 - d for d in res["distances"][0]],
+    ))  # [(meta, doc, sim), ...]
+
+    if not use_rerank:
+        return base[:k]
+
+    # 两阶段：把 bi-encoder 召回的 RECALL_K 条交给 reranker 重排
+    docs = [d for _, d, _ in base]
+    ranked = rerank(query, docs, top_n=RERANK_TOP)  # [(orig_idx, score), ...]
     out = []
-    for m, d, dist in zip(
-        res["metadatas"][0], res["documents"][0], res["distances"][0]
-    ):
-        out.append((m, d, 1.0 - dist))  # cosine 距离 → 相似度
+    for orig_idx, score in ranked:
+        meta, doc, _ = base[orig_idx]
+        out.append((meta, doc, score))  # 用 reranker 分当"相似度"展示
     return out
 
 
@@ -97,6 +134,7 @@ def reciprocal_rank(retrieved, expected):
 def main():
     verbose = "--verbose" in sys.argv
     rebuild = "--rebuild" in sys.argv
+    use_rerank = "--rerank" in sys.argv
 
     # 重建：删掉旧 chunk，用新切块策略重新入库（切换切块策略时用）
     if rebuild:
@@ -110,7 +148,6 @@ def main():
         )
         from miniRGA import RAGBot
         RAGBot("./data")  # 空库 → 触发 _ensure_embeddings 用新切块入库
-        # 注意：main() 里的 collection 变量是旧的，需重新绑定
         return  # 重建单独跑，不评估
 
     # 自举：本地库为空就先入库（复用 miniRGA 的入库逻辑）
@@ -118,13 +155,14 @@ def main():
         print(f"Chroma 为空（count=0），先调 BGE-M3 入库 ./data ...")
         from miniRGA import RAGBot
         RAGBot("./data")
-    print(f"知识库就绪：{collection.count()} chunks | 评估 {len(GOLDEN)} 个问题\n")
+    mode = "bi-encoder + BGE-Reranker 两阶段" if use_rerank else "bi-encoder 纯检索"
+    print(f"知识库就绪：{collection.count()} chunks | 模式：{mode} | 评估 {len(GOLDEN)} 个问题\n")
 
     sums = {"h1": 0, "h3": 0, "h5": 0, "rr": 0.0}
     print(f"{'#':>2} {'H@1':>4} {'H@3':>4} {'H@5':>4} {'RR':>5}  问题")
     print("-" * 60)
     for i, item in enumerate(GOLDEN, 1):
-        ret = retrieve(item["q"], k=5)
+        ret = retrieve(item["q"], k=RERANK_TOP if use_rerank else 5, use_rerank=use_rerank)
         h1 = hit_at_k(ret, item["expect"], 1)
         h3 = hit_at_k(ret, item["expect"], 3)
         h5 = hit_at_k(ret, item["expect"], 5)
@@ -144,12 +182,11 @@ def main():
                 preview = d[:48].replace("\n", " ")
                 print(f"      {m['source']}#{m['chunk_index']} sim={sim:.3f} | {preview}")
         if not h3:
-            # 失败案例重点标出，方便定位
             print(f"    ⚠ 未命中——可能需要调切块/检索策略")
 
     n = len(GOLDEN)
     print("\n" + "=" * 40)
-    print(f"汇总 (n={n})")
+    print(f"汇总 ({mode}, n={n})")
     print(f"  Hit@1 = {sums['h1']/n:.1%}   （top1 就对）")
     print(f"  Hit@3 = {sums['h3']/n:.1%}   （top3 有命中，线上用的是 top3）")
     print(f"  Hit@5 = {sums['h5']/n:.1%}")
