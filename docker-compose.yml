@@ -2,8 +2,6 @@
 # AI 求职作品集 Docker 编排
 # 用法：docker-compose up -d（后台启动）/ docker-compose down（停止）
 
-version: "3.8"
-
 services:
   # 后端服务：FastAPI + LangGraph Agent
   backend:
