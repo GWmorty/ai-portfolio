@@ -116,6 +116,12 @@ GOLDEN = [
     {"q": "你的学历和学校？",                "expect": {"profile.md"}},
     {"q": "你的联系方式 / 手机号？",         "expect": {"profile.md"}},
     {"q": "你现在 base 在哪里？",            "expect": {"profile.md"}},
+    # ---- faq.md（HR 高频行为问题）----
+    {"q": "你的三年职业规划是什么？",        "expect": {"faq.md"}},
+    {"q": "你为什么转行做 AI？",             "expect": {"faq.md"}},
+    {"q": "你的优点和缺点是什么？",          "expect": {"faq.md"}},
+    {"q": "我们为什么应该录用你？",          "expect": {"faq.md"}},
+    {"q": "你的期望薪资是多少？",            "expect": {"faq.md", "job-target.md"}},
 ]
 
 
