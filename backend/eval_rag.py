@@ -96,6 +96,22 @@ def reciprocal_rank(retrieved, expected):
 
 def main():
     verbose = "--verbose" in sys.argv
+    rebuild = "--rebuild" in sys.argv
+
+    # 重建：删掉旧 chunk，用新切块策略重新入库（切换切块策略时用）
+    if rebuild:
+        print(f"重建模式：清空 collection 后用新切块重入库 ...")
+        try:
+            chroma_client.delete_collection(name=COLLECTION_NAME)
+        except Exception:
+            pass
+        collection_new = chroma_client.get_or_create_collection(
+            name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"},
+        )
+        from miniRGA import RAGBot
+        RAGBot("./data")  # 空库 → 触发 _ensure_embeddings 用新切块入库
+        # 注意：main() 里的 collection 变量是旧的，需重新绑定
+        return  # 重建单独跑，不评估
 
     # 自举：本地库为空就先入库（复用 miniRGA 的入库逻辑）
     if collection.count() == 0:

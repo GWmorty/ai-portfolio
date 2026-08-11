@@ -13,30 +13,73 @@ CHROMA_PATH = os.path.expanduser("~/.ai_portfolio/chroma_db")
 COLLECTION_NAME = "knowledge_base"
 
 
-# ========== 切块部分（不变）==========
+# ========== 切块部分 ==========
 def chunk_file(file_path, chunk_size=300):
+    """
+    按 markdown 标题语义切块。
+    规则：把文件按 ##（H2）标题切成段落；每段加上文件 H1 标题做上下文。
+    没有标题的文件（或 H2 之间的内容）仍按 chunk_size 字符兜底切，避免单块过大。
+    返回 [{"text", "source", "chunk_index"}]。
+    """
     with open(file_path, "r", encoding="utf-8") as f:
         text = f.read()
+
+    file_h1 = ""
+    sections = []  # [(section_title, body)]
+    current_title = ""
+    current_body = []
+
+    for line in text.split("\n"):
+        if line.startswith("# ") and not file_h1:
+            file_h1 = line[2:].strip()
+        elif line.startswith("## "):
+            # 遇到新 H2：把上一段收尾
+            if current_title or current_body:
+                sections.append((current_title, "\n".join(current_body)))
+            current_title = line[3:].strip()
+            current_body = []
+        else:
+            current_body.append(line)
+    # 最后一段
+    if current_title or current_body:
+        sections.append((current_title, "\n".join(current_body)))
+
     chunks = []
-    for i in range(0, len(text), chunk_size):
-        chunks.append({
-            "text": text[i:i + chunk_size],
-            "source": os.path.basename(file_path),
-            "chunk_index": i // chunk_size
-        })
+    base_name = os.path.basename(file_path)
+    for idx, (title, body) in enumerate(sections):
+        body = body.strip()
+        if not body:
+            continue
+        # 文件顶部没 H2 的引导段（title 空）直接用，不重复加标题
+        context = f"# {file_h1}\n## {title}\n" if title else (f"# {file_h1}\n" if file_h1 else "")
+        full = context + body
+        # 兜底：单个 section 太长（>4×chunk_size）按字符切
+        if len(full) > chunk_size * 4:
+            for i in range(0, len(full), chunk_size):
+                chunks.append({
+                    "text": full[i:i + chunk_size],
+                    "source": base_name,
+                    "section": title or file_h1 or base_name,
+                    "chunk_index": len(chunks),
+                })
+        else:
+            chunks.append({
+                "text": full,
+                "source": base_name,
+                "section": title or file_h1 or base_name,
+                "chunk_index": len(chunks),
+            })
     return chunks
 
 
 def chunk_directory(dir_path, chunk_size=300):
     all_chunks = []
-    chunk_id = 0
-    for filename in os.listdir(dir_path):
-        if filename.endswith((".txt", ".md")):  # 支持 txt 和 md 文件
+    for filename in sorted(os.listdir(dir_path)):
+        if filename.endswith((".txt", ".md")):
             file_chunks = chunk_file(os.path.join(dir_path, filename), chunk_size)
             for chunk in file_chunks:
-                chunk["id"] = chunk_id
+                chunk["id"] = len(all_chunks)
                 all_chunks.append(chunk)
-                chunk_id += 1
     return all_chunks
 
 
@@ -105,7 +148,8 @@ class RAGBot:
             documents=texts,
             embeddings=embeddings,
             metadatas=[
-                {"source": chunk["source"], "chunk_index": chunk["chunk_index"]}
+                {"source": chunk["source"], "section": chunk.get("section", ""),
+                 "chunk_index": chunk["chunk_index"]}
                 for chunk in self.chunks
             ]
         )
