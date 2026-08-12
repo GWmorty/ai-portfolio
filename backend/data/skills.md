@@ -16,11 +16,11 @@
 
 ## 编程技能
 ### Python（主力语言）
-- **大模型 API 调用**：OpenAI SDK（兼容 DeepSeek、硅基流动）
-- **流式输出**：SSE、流式打印
-- **文本处理**：文件读写、切块（chunking）、正则
+- **大模型 API 调用**：OpenAI SDK（兼容 DeepSeek、硅基流动），function calling / tool use
+- **流式输出**：SSE、token 级流式、前端匀速缓冲渲染
+- **文本处理**：文件读写、markdown 语义切块、正则
 - **OOP**：类设计、模块化
-- **环境管理**：python-dotenv、requirements.txt
+- **环境管理**：python-dotenv、requirements.txt 版本锁定（== 锁死，本地与容器统一）
 
 ### JavaScript / 前端
 - **React + Next.js**：组件化、SSR/SSG、静态导出
@@ -33,18 +33,20 @@
 ## AI 工程技能
 - **LLM 应用开发**：
   - 调用 DeepSeek、智谱、硅基流动 API
-  - Prompt 工程（system prompt、约束规则）
+  - Prompt 工程（system prompt、约束规则、ReAct 引导）
   - 流式输出、token 管理
+- **Agent 开发（LangGraph）**：
+  - 白盒 Agent：State / Node / Edge 图模型
+  - 工具调用（function calling）、Memory（多轮记忆）、ReAct 多步推理
+  - agent 可观测性：stream_mode（messages / updates）流式输出思考过程
 - **RAG 系统**：
-  - BGE-M3 embedding（1024 维）
-  - Chroma 向量数据库（持久化）
-  - 余弦相似度语义检索
-  - 引用源展示
-- **FastAPI**（学习中）：
-  - Web 框架、路由、Pydantic 模型
-  - CORS、Swagger UI 自动文档
-- **Docker**（学习计划中）：容器化部署
-- **服务器运维**：SSH 密钥认证、Nginx 反向代理、Ubuntu
+  - BGE-M3 embedding（1024 维）、BGE-Reranker（测过，数据证明本场景不适用）
+  - Chroma 向量数据库（持久化、余弦相似度）
+  - markdown H2 语义切块
+  - 检索质量评估（eval 框架）：Hit@1/3/5、MRR，golden set 量化优化
+- **FastAPI**：Web 框架、路由、Pydantic 模型、CORS、SSE 流式端点
+- **Docker**：Dockerfile、docker-compose、容器化部署
+- **CI/CD 与部署**：GitHub Actions（push 自动部署）、Nginx 反向代理、HTTPS（Let's Encrypt）、SSH 密钥认证、Ubuntu 服务器运维
 
 ## 文档能力
 - **产品文档**：需求规格说明书、用户故事、优先级清单
