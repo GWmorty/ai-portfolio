@@ -118,6 +118,8 @@ SYSTEM_PROMPT = f"""你是一个 AI 求职助手，代表候选人范睿峰回�
 4. 资料里没有的信息，说"暂时没有详细说明"
 5. 用第一人称回答（"我"指代范睿峰）
 6. 语气专业、简洁、自信
+7. **始终用中文回答**，不要用英文
+8. **调用工具时不要输出任何文字说明**（不要说"让我查一下""Let me search"之类），直接调用工具，拿到结果后再组织回答
 
 【推理方式（ReAct）——遇到复杂问题分步查】
 - 复合问题（同时问到多个方面，如"你的技能 + 怎么用到工作上"）→ 拆成多个子问题，
@@ -216,6 +218,8 @@ async def ask_stream(request: AskRequest):
             "get_github_info": "查 GitHub 资料",
             "get_github_repos": "查 GitHub 仓库",
         }
+        seen_tool_msg = False  # 是否已出现过 ToolMessage（出现后，后续 AIMessageChunk 才是真答案）
+        pending = []           # 缓冲"尚未确认是真答案"的 AIMessageChunk 文本（可能是工具前奏）
         async for chunk in agent_graph.astream(
             {"messages": [HumanMessage(content=request.question)]},
             config={"configurable": {"thread_id": request.session_id}},
@@ -225,12 +229,23 @@ async def ask_stream(request: AskRequest):
 
             if mode == "messages":
                 msg = payload[0]   # (message, metadata) 里的 message
-                # 只透出 LLM 最终回答的文本 token（沿用验证过的过滤）
                 is_ai = isinstance(msg, (AIMessageChunk, AIMessage))
+                is_tool = isinstance(msg, ToolMessage)
                 has_text = isinstance(msg.content, str) and bool(msg.content)
                 no_tool_calls = not getattr(msg, "tool_calls", None)
-                if is_ai and has_text and no_tool_calls:
-                    yield f"data: {json.dumps({'type': 'token', 'content': msg.content}, ensure_ascii=False)}\n\n"
+
+                if is_tool:
+                    # 工具结果到了：说明之前缓冲的 AIMessageChunk 是"工具前奏"（如 Let me search...），丢弃
+                    pending = []
+                    seen_tool_msg = True
+                elif is_ai and has_text and no_tool_calls:
+                    if seen_tool_msg:
+                        # 工具之后的 AIMessage = 真正的最终答案，直接透出
+                        yield f"data: {json.dumps({'type': 'token', 'content': msg.content}, ensure_ascii=False)}\n\n"
+                    else:
+                        # 还没见过工具：可能是「不调工具直接答」（真答案），也可能是「工具前奏」。
+                        # 先缓冲，等确认（见 ToolMessage 就丢，流结束没见就 flush）
+                        pending.append(msg.content)
 
             elif mode == "updates":
                 # payload: {node_name: state_delta}。按节点发工具事件
@@ -254,6 +269,9 @@ async def ask_stream(request: AskRequest):
                             tool = getattr(last, "name", "") or ""
                             out = last.content if isinstance(last.content, str) else str(last.content)
                             yield f"data: {json.dumps({'type': 'tool_end', 'tool': tool, 'label': TOOL_LABEL.get(tool, tool), 'preview': out[:80]}, ensure_ascii=False)}\n\n"
+        # 流结束：若 pending 还有内容（说明没调工具，那是直接答的真答案），flush
+        if pending:
+            yield f"data: {json.dumps({'type': 'token', 'content': ''.join(pending)}, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
