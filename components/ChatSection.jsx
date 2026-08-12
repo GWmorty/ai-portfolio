@@ -264,7 +264,7 @@ export default function ChatSection() {
                 onKeyDown={handleKeyDown}
                 placeholder="问问我的技能、项目、经历..."
                 disabled={loading}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50"
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
               />
               <button
                 onClick={() => sendMessage()}
@@ -287,7 +287,7 @@ export default function ChatSection() {
               key={q}
               onClick={() => sendMessage(q)}
               disabled={loading}
-              className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-full hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-3 py-1.5 text-sm text-gray-800 bg-white border border-gray-300 rounded-full hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {q}
             </button>
