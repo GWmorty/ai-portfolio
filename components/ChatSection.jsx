@@ -42,6 +42,7 @@ export default function ChatSection() {
   const flushTimerRef = useRef(null);
   const streamEndedRef = useRef(false);  // 流是否已结束（结束后定时器把队列弹空就停）
   const abortRef = useRef(null);  // 当前 fetch 的 AbortController，用于中途发新问题时中断旧流
+  const runIdRef = useRef(0);  // 每次发问自增，用于区分"当前有效流"——旧流迟到 token 因 runId 不匹配被丢
 
   // 中断正在进行的流：直接丢弃队列剩余、abort 后端、停定时器。
   // （不追加剩余到消息——状态异步更新下"取最后一条消息"会错位写到新消息开头，丢弃更干净）
@@ -59,6 +60,8 @@ export default function ChatSection() {
 
     // 若有正在进行的流，先中断它（清队列、停定时器、abort 旧 fetch）
     if (loading) abortStream();
+    // 本次发问的唯一 id：旧流迟到的 token 因 runId 不匹配会被丢弃，避免混进新答复
+    const myRunId = ++runIdRef.current;
 
     // 1. 添加用户消息 + 一条空的 AI 消息（后续 token / steps 往里填）
     setMessages((prev) => [
@@ -84,13 +87,15 @@ export default function ChatSection() {
       });
       if (!response.ok) throw new Error(`API 错误: ${response.status}`);
 
-      // 匀速弹出定时器：每 10ms 弹 1 个字符（约 100 字/秒，偏快但流畅）。
+      // 匀速弹出定时器：每 7ms 弹 1 个字符（约 140 字/秒）。
       // 关键：渲染速度 < 生成速度，让队列保持积压，视觉匀速逐字，
       // 不受 DeepSeek 攒批影响。流结束后继续弹，直到队列空了才停。
+      // runId 校验：只有当前流的 token 才渲染，旧流迟到的 token 被丢
       tokenQueueRef.current = [];
       streamEndedRef.current = false;
       clearInterval(flushTimerRef.current);
       flushTimerRef.current = setInterval(() => {
+        if (runIdRef.current !== myRunId) { clearInterval(flushTimerRef.current); return; }
         if (tokenQueueRef.current.length === 0) {
           if (streamEndedRef.current) { clearInterval(flushTimerRef.current); }
           return;
@@ -106,7 +111,7 @@ export default function ChatSection() {
           }
           return next;
         });
-      }, 10);
+      }, 7);
 
       // 2. 用 reader 读取 SSE 流
       const reader = response.body.getReader();
@@ -130,9 +135,12 @@ export default function ChatSection() {
           try {
             const obj = JSON.parse(payload);
             if (obj.type === "token" && obj.content) {
-              // token 不直接渲染，入队列；定时器匀速弹出（避免后端"一阵阵"导致卡顿）
+              // runId 校验：旧流 abort 后迟到的 token 直接丢，不混进新队列
+              if (runIdRef.current !== myRunId) continue;
               tokenQueueRef.current.push(obj.content);
             } else if (obj.type === "tool_start" || obj.type === "tool_end") {
+              // runId 校验：旧流迟到的工具事件也丢
+              if (runIdRef.current !== myRunId) continue;
               // 工具事件立即应用（不缓冲）
               setMessages((prev) => {
                 const next = [...prev];
