@@ -1,15 +1,17 @@
 export default function SkillsSection() {
   const skills = [
     { name: "Python", level: "实战" },
-    { name: "Next.js", level: "实战" },
-    { name: "React", level: "实战" },
+    { name: "Next.js / React", level: "实战" },
+    { name: "Tailwind CSS", level: "实战" },
+    { name: "FastAPI", level: "实战" },
     { name: "大模型 API", level: "实战" },
     { name: "RAG", level: "实战" },
+    { name: "LangGraph / Agent", level: "实战" },
+    { name: "Docker", level: "实战" },
     { name: "Linux 部署", level: "实战" },
-    { name: "Tailwind CSS", level: "学习中" },
-    { name: "FastAPI", level: "学习中" },
-    { name: "Docker", level: "概念" },
-    { name: "Kubernetes", level: "概念" },
+    { name: "Chroma", level: "学习中" },
+    { name: "流式 SSE", level: "学习中" },
+    { name: "Eval / 可观测性", level: "学习中" },
   ];
 
   const levelStyles = {
