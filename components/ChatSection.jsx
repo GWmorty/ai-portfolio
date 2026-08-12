@@ -37,6 +37,9 @@ export default function ChatSection() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages]);
+  // token 渲染队列：后端"一阵阵"到的 token 进队列，定时器匀速弹出，视觉丝滑
+  const tokenQueueRef = useRef([]);
+  const flushTimerRef = useRef(null);
 
   // 发送消息（流式：逐字渲染 AI 回复）
   const sendMessage = async (question = null) => {
@@ -65,6 +68,22 @@ export default function ChatSection() {
       });
       if (!response.ok) throw new Error(`API 错误: ${response.status}`);
 
+      // 匀速弹出定时器：每 22ms 把队列里所有 token 合并追加一次（视觉丝滑）
+      tokenQueueRef.current = [];
+      clearInterval(flushTimerRef.current);
+      flushTimerRef.current = setInterval(() => {
+        if (tokenQueueRef.current.length === 0) return;
+        const chunk = tokenQueueRef.current.splice(0, tokenQueueRef.current.length).join("");
+        setMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last && last.role === "assistant") {
+            next[next.length - 1] = { ...last, content: last.content + chunk };
+          }
+          return next;
+        });
+      }, 22);
+
       // 2. 用 reader 读取 SSE 流
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -86,31 +105,31 @@ export default function ChatSection() {
           if (payload === "[DONE]") continue;
           try {
             const obj = JSON.parse(payload);
-            // 按 type 分发更新到最后一条 AI 消息
-            setMessages((prev) => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              if (obj.type === "token" && obj.content) {
-                // LLM 生成的回答 token，追加到 content
-                next[next.length - 1] = { ...last, content: last.content + obj.content };
-              } else if (obj.type === "tool_start") {
-                // agent 开始调工具：加一个"进行中"步骤
-                const steps = [...(last.steps || [])];
-                steps.push({ tool: obj.tool, label: obj.label, query: obj.query, status: "running" });
-                next[next.length - 1] = { ...last, steps };
-              } else if (obj.type === "tool_end") {
-                // 工具执行完：把最后一个 running 步骤标 done
-                const steps = [...(last.steps || [])];
-                for (let i = steps.length - 1; i >= 0; i--) {
-                  if (steps[i].status === "running" && steps[i].tool === obj.tool) {
-                    steps[i] = { ...steps[i], status: "done", preview: obj.preview };
-                    break;
+            if (obj.type === "token" && obj.content) {
+              // token 不直接渲染，入队列；定时器匀速弹出（避免后端"一阵阵"导致卡顿）
+              tokenQueueRef.current.push(obj.content);
+            } else if (obj.type === "tool_start" || obj.type === "tool_end") {
+              // 工具事件立即应用（不缓冲）
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (obj.type === "tool_start") {
+                  const steps = [...(last.steps || [])];
+                  steps.push({ tool: obj.tool, label: obj.label, query: obj.query, status: "running" });
+                  next[next.length - 1] = { ...last, steps };
+                } else if (obj.type === "tool_end") {
+                  const steps = [...(last.steps || [])];
+                  for (let i = steps.length - 1; i >= 0; i--) {
+                    if (steps[i].status === "running" && steps[i].tool === obj.tool) {
+                      steps[i] = { ...steps[i], status: "done", preview: obj.preview };
+                      break;
+                    }
                   }
+                  next[next.length - 1] = { ...last, steps };
                 }
-                next[next.length - 1] = { ...last, steps };
-              }
-              return next;
-            });
+                return next;
+              });
+            }
           } catch {
             // 忽略半截 JSON
           }
@@ -126,6 +145,19 @@ export default function ChatSection() {
         return [...prev, { role: "assistant", content: FALLBACK_TEXT }];
       });
     } finally {
+      // 停定时器，把队列里没弹完的 token 一次性 flush（别丢）
+      clearInterval(flushTimerRef.current);
+      if (tokenQueueRef.current.length > 0) {
+        const rest = tokenQueueRef.current.splice(0).join("");
+        setMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last && last.role === "assistant") {
+            next[next.length - 1] = { ...last, content: last.content + rest };
+          }
+          return next;
+        });
+      }
       setLoading(false);
     }
   };
@@ -137,6 +169,9 @@ export default function ChatSection() {
       sendMessage();
     }
   };
+
+  // 组件卸载时清定时器，避免泄漏
+  useEffect(() => () => clearInterval(flushTimerRef.current), []);
 
   return (
     <section
