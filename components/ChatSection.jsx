@@ -202,11 +202,11 @@ export default function ChatSection() {
                   key={i}
                   className={`flex flex-col ${
                     msg.role === "user" ? "items-end" : "items-start"
-                  } max-w-[85%]`}
+                  }`}
                 >
-                  {/* agent 思考过程（工具步骤）——独立卡片，在气泡外、上方 */}
+                  {/* agent 思考过程（工具步骤）——独立卡片，宽度限制 85% */}
                   {msg.role === "assistant" && msg.steps && msg.steps.length > 0 && (
-                    <div className="mb-1.5 w-full rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-xs text-gray-500">
+                    <div className="mb-1.5 max-w-[85%] rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-xs text-gray-500">
                       <div className="flex items-center gap-1 mb-1 font-medium text-gray-400">
                         <span>🤖</span>
                         <span>思考过程</span>
@@ -227,7 +227,7 @@ export default function ChatSection() {
                     </div>
                   )}
                   <div
-                    className={`rounded-2xl px-4 py-3 text-sm md:text-base ${
+                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm md:text-base break-words ${
                       msg.role === "user"
                         ? "bg-blue-600 text-white rounded-br-sm"
                         : "bg-gray-100 text-gray-800 rounded-bl-sm"
