@@ -18,23 +18,31 @@
 
 ## AI 求职作品集（个人独立项目）
 **时间**：2026.06 - 至今
-**技术栈**：Next.js + Tailwind CSS + FastAPI（后端开发中）
+**技术栈**：Next.js + Tailwind CSS + FastAPI + LangGraph + RAG
 
 ### 项目说明
-这是为求职打造的个人作品集网站，让 HR 可以通过对话了解候选人。
+这是为求职打造的个人作品集网站，让 HR 通过与 AI 助手对话来了解候选人。访客体验产品的过程，就是了解我的过程。这是我 AI 工程能力的综合落地项目。
 
 ### 已完成
-- **前端**：使用 Next.js + Tailwind CSS 实现 5 栏式作品集（Hero、About、Skills、Projects、Contact），PC + 移动端响应式
-- **部署**：购买新加坡云服务器，配置 Nginx 反向代理，确保国内 HR 无需梯子即可访问
-- **SSH 安全**：配置密钥认证（禁用密码登录），完成 SSH 工程化最佳实践
-- **网址**：http://43.156.80.35（HTTP，待配 HTTPS）
+- **前端**：Next.js + Tailwind CSS 实现 5 栏式作品集（Hero、About、Skills、Projects、Contact），PC + 移动端响应式
+- **后端**：FastAPI 服务，把 RAG 引擎和 LangGraph Agent 包成 API
+- **AI 助手（Agent）**：基于 LangGraph 的白盒 Agent，带 3 个工具（候选人资料检索 / GitHub 信息 / GitHub 仓库），支持多轮记忆（Memory）和 ReAct 多步推理
+- **RAG 系统**：BGE-M3 embedding（1024 维）+ Chroma 向量数据库 + 余弦相似度检索；知识库 5 个源文件 + HR 高频问答共 40 个 chunk，按 markdown H2 标题语义切块
+- **检索质量评估**：自建 eval 框架，用 27 个 HR 真实问题做 golden set，量化 Hit@1/3/5 + MRR。当前基线 Hit@3=96.3%、MRR=0.915。测过 BGE-Reranker，数据证明在小数据集上反而更差，果断不上线——用数据做技术选型
+- **流式体验**：SSE 逐 token 输出 + agent 思考过程可视化（HR 能看到"正在检索候选人资料"这类内部动作）+ 前端匀速缓冲（解决后端攒批导致的卡顿）
+- **部署与运维**：Docker 化后端，GitHub Actions CI/CD（push 到 main 自动部署），Nginx 反向代理，HTTPS（Let's Encrypt 自动续期），依赖版本全 == 锁定（本地与容器统一 Python 3.14，根除版本漂移）
 
-### 进行中
-- 后端 FastAPI 服务，把 RAG 引擎包成 API
-- 前端集成聊天组件，HR 可直接在网站对话
+### 网址
+http://43.156.80.35（HTTPS 配置中，即将启用自有域名）
 
 ### GitHub
 https://github.com/GWmorty
+
+### 我从项目里学到的
+- LangGraph 白盒 Agent 的 State/Node/Edge 模型，以及 stream_mode（messages/updates）做 agent 可观测性
+- RAG 不只是"接个向量库"：切块策略比模型更重要，检索质量必须用 eval 量化而不是凭感觉
+- "先进的技术 ≠ 更好"：reranker 在我的场景反直觉地更差，靠实验和数据才能判断
+- 工程化：版本锁定、CI/CD、可观测性这些"无聊"的事，是项目能稳定运行的关键
 
 ## mini RAG 知识库（个人独立项目）
 **时间**：2026.07
