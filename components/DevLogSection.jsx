@@ -63,6 +63,14 @@ export default function DevLogSection() {
       lesson: "abort 不能瞬间停掉一切，异步竞态要用逻辑标记区分新旧。",
     },
     {
+      tag: "Agent",
+      title: "答案开头冒英文「Let me search...」",
+      problem: "问问题后，AI 回答开头突然蹦出一段英文「Let me search for information about...」，然后才是中文答案。",
+      cause: "DeepSeek 决定调工具时会先吐一段英文独白；每个流式 chunk 都是 AIMessageChunk 且 tool_calls=False（tool_calls 要等这条消息流完才聚合），被旧过滤当成最终答案透传了。",
+      fix: "prompt 治本（要求调工具时不输出文字、始终用中文）+ 后端兜底（缓冲工具前的 AIMessageChunk，遇 ToolMessage 判定为前奏丢弃，工具后的才是真答案）。",
+      lesson: "流式过滤光看「单个 chunk 有没有 tool_calls」不够，因为 tool_calls 是延迟聚合的——反直觉的时序陷阱。",
+    },
+    {
       tag: "部署",
       title: "国内 HR 打不开网站",
       problem: "换 DuckDNS 域名后国内要翻墙。",
