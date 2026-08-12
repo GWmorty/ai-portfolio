@@ -1,4 +1,10 @@
+"use client";
+
+import { useState } from "react";
+
 export default function DevLogSection() {
+  const [openIdx, setOpenIdx] = useState(null);
+
   const issues = [
     {
       tag: "后端",
@@ -89,42 +95,60 @@ export default function DevLogSection() {
           </p>
         </div>
 
-        <div className="space-y-5">
-          {issues.map((issue, i) => (
-            <article
-              key={i}
-              className="p-6 rounded-2xl border border-zinc-200 bg-zinc-50 hover:border-zinc-300 hover:bg-white hover:shadow-sm transition-all"
-            >
-              <div className="flex items-center gap-3 mb-3">
-                <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full ${tagStyles[issue.tag]}`}>
-                  {issue.tag}
-                </span>
-                <h3 className="text-base font-semibold text-zinc-900">
-                  {issue.title}
-                </h3>
-              </div>
+        <div className="space-y-2">
+          {issues.map((issue, i) => {
+            const isOpen = openIdx === i;
+            return (
+              <article
+                key={i}
+                className={`rounded-xl border transition-all ${
+                  isOpen
+                    ? "border-zinc-300 bg-zinc-50 shadow-sm"
+                    : "border-zinc-200 bg-white hover:border-zinc-300"
+                }`}
+              >
+                {/* 标题行（可点击）*/}
+                <button
+                  onClick={() => setOpenIdx(isOpen ? null : i)}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left"
+                >
+                  <span className={`flex-shrink-0 px-2 py-0.5 text-xs font-medium rounded-full ${tagStyles[issue.tag]}`}>
+                    {issue.tag}
+                  </span>
+                  <span className={`flex-1 text-sm ${isOpen ? "font-semibold text-zinc-900" : "font-medium text-zinc-800"}`}>
+                    {issue.title}
+                  </span>
+                  <span className={`flex-shrink-0 text-zinc-400 transition-transform ${isOpen ? "rotate-90" : ""}`}>
+                    ▶
+                  </span>
+                </button>
 
-              <dl className="space-y-2 text-sm">
-                <div className="flex gap-2">
-                  <dt className="flex-shrink-0 w-16 text-zinc-400">现象</dt>
-                  <dd className="text-zinc-700">{issue.problem}</dd>
-                </div>
-                <div className="flex gap-2">
-                  <dt className="flex-shrink-0 w-16 text-zinc-400">根因</dt>
-                  <dd className="text-zinc-700">{issue.cause}</dd>
-                </div>
-                <div className="flex gap-2">
-                  <dt className="flex-shrink-0 w-16 text-zinc-400">解决</dt>
-                  <dd className="text-zinc-700">{issue.fix}</dd>
-                </div>
-              </dl>
-
-              <div className="mt-3 pt-3 border-t border-zinc-200/70 flex gap-2 text-sm">
-                <span className="flex-shrink-0 text-zinc-400">💡 教训</span>
-                <span className="text-zinc-900 font-medium">{issue.lesson}</span>
-              </div>
-            </article>
-          ))}
+                {/* 详情区（展开时才渲染）*/}
+                {isOpen && (
+                  <div className="px-4 pb-4 pt-1">
+                    <dl className="space-y-2 text-sm">
+                      <div className="flex gap-2">
+                        <dt className="flex-shrink-0 w-12 text-zinc-400">现象</dt>
+                        <dd className="text-zinc-700">{issue.problem}</dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="flex-shrink-0 w-12 text-zinc-400">根因</dt>
+                        <dd className="text-zinc-700">{issue.cause}</dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="flex-shrink-0 w-12 text-zinc-400">解决</dt>
+                        <dd className="text-zinc-700">{issue.fix}</dd>
+                      </div>
+                    </dl>
+                    <div className="mt-3 pt-3 border-t border-zinc-200/70 flex gap-2 text-sm">
+                      <span className="flex-shrink-0 text-zinc-400">💡 教训</span>
+                      <span className="text-zinc-900 font-medium">{issue.lesson}</span>
+                    </div>
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       </div>
     </section>
