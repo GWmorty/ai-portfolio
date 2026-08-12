@@ -43,23 +43,12 @@ export default function ChatSection() {
   const streamEndedRef = useRef(false);  // 流是否已结束（结束后定时器把队列弹空就停）
   const abortRef = useRef(null);  // 当前 fetch 的 AbortController，用于中途发新问题时中断旧流
 
-  // 中断正在进行的流：把队列里已积压的 token 一次性显示完，再 abort 后端、停定时器。
-  // （后端还没生成完的部分会丢，但已到达前端的不会丢——用户能看到上一个的"快进版"完整尾）
+  // 中断正在进行的流：直接丢弃队列剩余、abort 后端、停定时器。
+  // （不追加剩余到消息——状态异步更新下"取最后一条消息"会错位写到新消息开头，丢弃更干净）
   const abortStream = () => {
-    // 先把队列剩余一次性追加到当前 AI 消息
-    if (tokenQueueRef.current.length > 0) {
-      const rest = tokenQueueRef.current.splice(0).join("");
-      setMessages((prev) => {
-        const next = [...prev];
-        const last = next[next.length - 1];
-        if (last && last.role === "assistant") {
-          next[next.length - 1] = { ...last, content: last.content + rest };
-        }
-        return next;
-      });
-    }
     if (abortRef.current) { try { abortRef.current.abort(); } catch {} abortRef.current = null; }
     clearInterval(flushTimerRef.current);
+    tokenQueueRef.current = [];
     streamEndedRef.current = true;
   };
 
