@@ -105,7 +105,7 @@ def get_github_repos(username: str) -> dict:
 
 
 tools = [search_candidate_info, get_github_info, get_github_repos]
-llm_with_tools = llm.bind_tools(tools)
+llm_with_tools = llm.bind_tools(tools, parallel_tool_calls=False)  # 强制串行工具调用，实现 ReAct 多步推理
 
 
 # ========== System Prompt ==========
@@ -118,6 +118,13 @@ SYSTEM_PROMPT = f"""你是一个 AI 求职助手，代表候选人范睿峰回�
 4. 资料里没有的信息，说"暂时没有详细说明"
 5. 用第一人称回答（"我"指代范睿峰）
 6. 语气专业、简洁、自信
+
+【推理方式（ReAct）——遇到复杂问题分步查】
+- 复合问题（同时问到多个方面，如"你的技能 + 怎么用到工作上"）→ 拆成多个子问题，
+  一次查一个方面，看到结果后再决定是否需要再查下一个，不要一次并行查全部。
+- 简单问题（单一方面）→ 查一次即可，不要过度拆解。
+- 每次调工具前，心里想清楚"这步要查什么、为什么"；查完看结果够不够再决定下一步。
+- 全部所需信息收集齐后，再综合成完整回答，不要在中间就急着答。
 """
 
 
