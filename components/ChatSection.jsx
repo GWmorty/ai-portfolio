@@ -40,11 +40,36 @@ export default function ChatSection() {
   // token 渲染队列：后端"一阵阵"到的 token 进队列，定时器匀速弹出，视觉丝滑
   const tokenQueueRef = useRef([]);
   const flushTimerRef = useRef(null);
+  const streamEndedRef = useRef(false);  // 流是否已结束（结束后定时器把队列弹空就停）
+  const abortRef = useRef(null);  // 当前 fetch 的 AbortController，用于中途发新问题时中断旧流
+
+  // 中断正在进行的流：把队列里已积压的 token 一次性显示完，再 abort 后端、停定时器。
+  // （后端还没生成完的部分会丢，但已到达前端的不会丢——用户能看到上一个的"快进版"完整尾）
+  const abortStream = () => {
+    // 先把队列剩余一次性追加到当前 AI 消息
+    if (tokenQueueRef.current.length > 0) {
+      const rest = tokenQueueRef.current.splice(0).join("");
+      setMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === "assistant") {
+          next[next.length - 1] = { ...last, content: last.content + rest };
+        }
+        return next;
+      });
+    }
+    if (abortRef.current) { try { abortRef.current.abort(); } catch {} abortRef.current = null; }
+    clearInterval(flushTimerRef.current);
+    streamEndedRef.current = true;
+  };
 
   // 发送消息（流式：逐字渲染 AI 回复）
   const sendMessage = async (question = null) => {
     const text = (question || input).trim();
-    if (!text || loading) return;
+    if (!text) return;
+
+    // 若有正在进行的流，先中断它（清队列、停定时器、abort 旧 fetch）
+    if (loading) abortStream();
 
     // 1. 添加用户消息 + 一条空的 AI 消息（后续 token / steps 往里填）
     setMessages((prev) => [
@@ -61,28 +86,38 @@ export default function ChatSection() {
         : "/api/ask/stream";
 
     try {
+      abortRef.current = new AbortController();
       const response = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: text, session_id: sessionId }),
+        signal: abortRef.current.signal,
       });
       if (!response.ok) throw new Error(`API 错误: ${response.status}`);
 
-      // 匀速弹出定时器：每 22ms 把队列里所有 token 合并追加一次（视觉丝滑）
+      // 匀速弹出定时器：每 10ms 弹 1 个字符（约 100 字/秒，偏快但流畅）。
+      // 关键：渲染速度 < 生成速度，让队列保持积压，视觉匀速逐字，
+      // 不受 DeepSeek 攒批影响。流结束后继续弹，直到队列空了才停。
       tokenQueueRef.current = [];
+      streamEndedRef.current = false;
       clearInterval(flushTimerRef.current);
       flushTimerRef.current = setInterval(() => {
-        if (tokenQueueRef.current.length === 0) return;
-        const chunk = tokenQueueRef.current.splice(0, tokenQueueRef.current.length).join("");
+        if (tokenQueueRef.current.length === 0) {
+          if (streamEndedRef.current) { clearInterval(flushTimerRef.current); }
+          return;
+        }
+        const joined = tokenQueueRef.current.splice(0).join("");
+        const out = joined.slice(0, 1);
+        if (joined.length > 1) tokenQueueRef.current.unshift(joined.slice(1));
         setMessages((prev) => {
           const next = [...prev];
           const last = next[next.length - 1];
           if (last && last.role === "assistant") {
-            next[next.length - 1] = { ...last, content: last.content + chunk };
+            next[next.length - 1] = { ...last, content: last.content + out };
           }
           return next;
         });
-      }, 22);
+      }, 10);
 
       // 2. 用 reader 读取 SSE 流
       const reader = response.body.getReader();
@@ -136,6 +171,8 @@ export default function ChatSection() {
         }
       }
     } catch (error) {
+      // 中途被新问题中断（AbortError）→ 不填兜底文案，静默退出（被 abortStream 已清理）
+      if (error.name === "AbortError") return;
       // 网络失败 / 后端没启动 → 在那条空 AI 消息里填兜底文案
       setMessages((prev) => {
         const last = prev[prev.length - 1];
@@ -145,19 +182,10 @@ export default function ChatSection() {
         return [...prev, { role: "assistant", content: FALLBACK_TEXT }];
       });
     } finally {
-      // 停定时器，把队列里没弹完的 token 一次性 flush（别丢）
-      clearInterval(flushTimerRef.current);
-      if (tokenQueueRef.current.length > 0) {
-        const rest = tokenQueueRef.current.splice(0).join("");
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last && last.role === "assistant") {
-            next[next.length - 1] = { ...last, content: last.content + rest };
-          }
-          return next;
-        });
-      }
+      // 不一次性 flush 剩余（会蹦一大段破坏匀速），只标记流结束；
+      // 定时器会把队列里剩余 token 按 10ms/字继续匀速弹完，弹空了自动停。
+      // 若是中途被 abort，abortStream 已置 streamEnded=true，这里无副作用。
+      streamEndedRef.current = true;
       setLoading(false);
     }
   };
@@ -263,12 +291,11 @@ export default function ChatSection() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="问问我的技能、项目、经历..."
-                disabled={loading}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <button
                 onClick={() => sendMessage()}
-                disabled={loading || !input.trim()}
+                disabled={!input.trim()}
                 className="px-4 md:px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
               >
                 发送
@@ -286,8 +313,7 @@ export default function ChatSection() {
             <button
               key={q}
               onClick={() => sendMessage(q)}
-              disabled={loading}
-              className="px-3 py-1.5 text-sm text-gray-800 bg-white border border-gray-300 rounded-full hover:bg-blue-50 hover:border-blue-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-3 py-1.5 text-sm text-gray-800 bg-white border border-gray-300 rounded-full hover:bg-blue-50 hover:border-blue-300 transition-colors"
             >
               {q}
             </button>
