@@ -15,7 +15,7 @@ import json
 
 from langchain_openai import ChatOpenAI
 from langchain.tools import tool
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessageChunk, AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessageChunk, AIMessage, ToolMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -201,27 +201,52 @@ async def ask_endpoint(request: AskRequest):
 # ⭐ 流式端点：逐字返回 AI 回答（像 ChatGPT 打字机效果）
 @app.post("/ask/stream")
 async def ask_stream(request: AskRequest):
-    """SSE 流式输出——前端逐字显示"""
+    """SSE 流式输出——逐字返回 AI 回答 + agent 工具调用过程"""
     async def generate():
+        # 工具名 → 中文友好标签（前端可读）
+        TOOL_LABEL = {
+            "search_candidate_info": "检索候选人资料",
+            "get_github_info": "查 GitHub 资料",
+            "get_github_repos": "查 GitHub 仓库",
+        }
         async for chunk in agent_graph.astream(
             {"messages": [HumanMessage(content=request.question)]},
             config={"configurable": {"thread_id": request.session_id}},
-            stream_mode="messages",
+            stream_mode=["messages", "updates"],
         ):
-            # chunk 是 (message, metadata) 元组
-            msg = chunk[0]
-            # 只透出 LLM 的「最终回答」文本：
-            #   - 排除 ToolMessage：检索回来的原文，不能当 AI 回复泄漏
-            #   - 排除带 tool_calls 的中间 AIMessage：“让我查一下…”这类前奏
-            #   - 兼容两种运行环境：
-            #       流式生效时 → 拿到 AIMessageChunk 增量（前端逐字）
-            #       流式不生效时 → 拿到整条 AIMessage（前端一次性显示）
-            #     （不同 langchain/langgraph 版本下 ainvoke 是否被拆成 chunk 行为不同）
-            is_ai = isinstance(msg, (AIMessageChunk, AIMessage))
-            has_text = isinstance(msg.content, str) and bool(msg.content)
-            no_tool_calls = not getattr(msg, "tool_calls", None)
-            if is_ai and has_text and no_tool_calls:
-                yield f"data: {json.dumps({'content': msg.content}, ensure_ascii=False)}\n\n"
+            mode, payload = chunk  # (stream_mode_name, data)
+
+            if mode == "messages":
+                msg = payload[0]   # (message, metadata) 里的 message
+                # 只透出 LLM 最终回答的文本 token（沿用验证过的过滤）
+                is_ai = isinstance(msg, (AIMessageChunk, AIMessage))
+                has_text = isinstance(msg.content, str) and bool(msg.content)
+                no_tool_calls = not getattr(msg, "tool_calls", None)
+                if is_ai and has_text and no_tool_calls:
+                    yield f"data: {json.dumps({'type': 'token', 'content': msg.content}, ensure_ascii=False)}\n\n"
+
+            elif mode == "updates":
+                # payload: {node_name: state_delta}。按节点发工具事件
+                for node, state in (payload.items() if isinstance(payload, dict) else []):
+                    if not isinstance(state, dict):
+                        continue
+                    msgs = state.get("messages") or []
+                    if not msgs:
+                        continue
+                    last = msgs[-1]
+                    if node == "agent":
+                        # agent 节点：LLM 这一步要调工具 → 发 tool_start
+                        for tc in getattr(last, "tool_calls", []) or []:
+                            tool = tc.get("name", "")
+                            args = tc.get("args", {}) or {}
+                            query = args.get("query") or args.get("username") or ""
+                            yield f"data: {json.dumps({'type': 'tool_start', 'tool': tool, 'label': TOOL_LABEL.get(tool, tool), 'query': str(query)[:40]}, ensure_ascii=False)}\n\n"
+                    elif node == "tools":
+                        # tools 节点：ToolMessage 是工具返回值 → 发 tool_end
+                        if isinstance(last, ToolMessage):
+                            tool = getattr(last, "name", "") or ""
+                            out = last.content if isinstance(last.content, str) else str(last.content)
+                            yield f"data: {json.dumps({'type': 'tool_end', 'tool': tool, 'label': TOOL_LABEL.get(tool, tool), 'preview': out[:80]}, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")

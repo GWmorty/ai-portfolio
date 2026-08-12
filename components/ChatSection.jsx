@@ -43,11 +43,11 @@ export default function ChatSection() {
     const text = (question || input).trim();
     if (!text || loading) return;
 
-    // 1. 添加用户消息 + 一条空的 AI 消息（后续 token 往里 append）
+    // 1. 添加用户消息 + 一条空的 AI 消息（后续 token / steps 往里填）
     setMessages((prev) => [
       ...prev,
       { role: "user", content: text },
-      { role: "assistant", content: "" },
+      { role: "assistant", content: "", steps: [] },
     ]);
     setInput("");
     setLoading(true);
@@ -85,18 +85,34 @@ export default function ChatSection() {
           const payload = line.slice(5).trim();
           if (payload === "[DONE]") continue;
           try {
-            const { content } = JSON.parse(payload);
-            if (content) {
-              // 3. 把 token 追加到最后一条 AI 消息
-              setMessages((prev) => {
-                const next = [...prev];
-                const last = next[next.length - 1];
-                next[next.length - 1] = { ...last, content: last.content + content };
-                return next;
-              });
-            }
+            const obj = JSON.parse(payload);
+            // 按 type 分发更新到最后一条 AI 消息
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (obj.type === "token" && obj.content) {
+                // LLM 生成的回答 token，追加到 content
+                next[next.length - 1] = { ...last, content: last.content + obj.content };
+              } else if (obj.type === "tool_start") {
+                // agent 开始调工具：加一个"进行中"步骤
+                const steps = [...(last.steps || [])];
+                steps.push({ tool: obj.tool, label: obj.label, query: obj.query, status: "running" });
+                next[next.length - 1] = { ...last, steps };
+              } else if (obj.type === "tool_end") {
+                // 工具执行完：把最后一个 running 步骤标 done
+                const steps = [...(last.steps || [])];
+                for (let i = steps.length - 1; i >= 0; i--) {
+                  if (steps[i].status === "running" && steps[i].tool === obj.tool) {
+                    steps[i] = { ...steps[i], status: "done", preview: obj.preview };
+                    break;
+                  }
+                }
+                next[next.length - 1] = { ...last, steps };
+              }
+              return next;
+            });
           } catch {
-            // 忽略半截 JSON（理论上不会发生，留作兜底）
+            // 忽略半截 JSON
           }
         }
       }
@@ -173,7 +189,23 @@ export default function ChatSection() {
                         ></span>
                       </div>
                     ) : (
-                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                      <div className="whitespace-pre-wrap">
+                        {/* agent 工具调用过程（思考步骤）*/}
+                        {msg.steps && msg.steps.length > 0 && (
+                          <div className="mb-2 space-y-1 text-xs text-gray-500 border-l-2 border-blue-300 pl-2">
+                            {msg.steps.map((s, si) => (
+                              <div key={si} className="flex items-center gap-1.5">
+                                <span>{s.status === "running" ? "⏳" : "✓"}</span>
+                                <span>
+                                  {s.label}
+                                  {s.query ? `：${s.query}` : ""}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {msg.content}
+                      </div>
                     )}
                   </div>
                 </div>
