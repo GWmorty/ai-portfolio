@@ -27,6 +27,15 @@ export default function ContactSection() {
           >
             GitHub
           </a>
+          <a
+            href="tel:+8618021080437"
+            className="inline-flex items-center px-6 py-3 rounded-full border border-zinc-700 text-zinc-200 font-medium hover:border-white hover:text-white transition-colors"
+          >
+            📞 18021080437
+          </a>
+          <span className="inline-flex items-center px-6 py-3 rounded-full border border-zinc-700 text-zinc-200 font-medium">
+            💬 微信 Fanddlyc517
+          </span>
         </div>
 
         <footer className="mt-20 pt-8 border-t border-zinc-800 text-sm text-zinc-500">
