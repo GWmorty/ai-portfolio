@@ -27,7 +27,7 @@
 - **前端**：Next.js + Tailwind CSS 实现 5 栏式作品集（Hero、About、Skills、Projects、Contact），PC + 移动端响应式
 - **后端**：FastAPI 服务，把 RAG 引擎和 LangGraph Agent 包成 API
 - **AI 助手（Agent）**：基于 LangGraph 的白盒 Agent，带 3 个工具（候选人资料检索 / GitHub 信息 / GitHub 仓库），支持多轮记忆（Memory）和 ReAct 多步推理
-- **RAG 系统**：BGE-M3 embedding（1024 维）+ Chroma 向量数据库 + 余弦相似度检索；知识库 5 个源文件 + HR 高频问答共 44 个 chunk，按 markdown H2 标题语义切块
+- **RAG 系统**：BGE-M3 embedding（1024 维）+ Chroma 向量数据库 + 余弦相似度检索；知识库 5 个源文件 + HR 高频问答共 45 个 chunk，按 markdown H2 标题语义切块
 - **检索质量评估**：自建 eval 框架，用 27 个 HR 真实问题做 golden set，量化 Hit@1/3/5 + MRR。当前基线：Hit@1=85.2%、Hit@3=96.3%、Hit@5=96.3%、MRR=0.901。测过 BGE-Reranker，数据证明在小数据集上反而更差，果断不上线——用数据做技术选型
 - **生成忠实度评估**：LLM-as-judge 双模式——纯 RAG 链路与生产 Agent 的 /ask 回答各用 12 个 HR 问题检验，逐句核对每个事实陈述是否有资料依据，忠实度均为 100%；系统提示词含防编造规则（资料里没有的未来计划/数字禁止补充）
 - **流式体验**：SSE 逐 token 输出 + agent 思考过程可视化（HR 能看到"正在检索候选人资料"这类内部动作）+ 前端匀速缓冲（解决后端攒批导致的卡顿）
