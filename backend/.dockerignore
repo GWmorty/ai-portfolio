@@ -24,6 +24,3 @@ uvicorn*.log
 # IDE
 .vscode/
 .idea/
-
-# 测试文件
-test_*.py
