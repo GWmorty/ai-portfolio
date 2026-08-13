@@ -33,7 +33,8 @@
 - **部署与运维**：Docker 化后端，GitHub Actions CI/CD（push 到 main 自动部署），Nginx 反向代理，HTTPS（Let's Encrypt 自动续期），依赖版本全 == 锁定（本地与容器统一 Python 3.14，根除版本漂移）
 
 ### 网址
-http://43.156.80.35（HTTPS 配置中，即将启用自有域名）
+- IP 直连：http://43.156.80.35（HTTP 可用，始终可访问）
+- 域名：HTTPS 已配置（Let's Encrypt），但此前基于 DuckDNS 免费子域名，国内有 DNS 污染、访问不稳定；正在更换国内可解析的正规域名（进行中）
 
 ### GitHub
 https://github.com/GWmorty
