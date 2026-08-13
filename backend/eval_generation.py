@@ -70,6 +70,7 @@ RAG_PROMPT = """你是一个 AI 求职助手，代表候选人范睿峰回答 HR
 3. 不要编造经历、技能或项目
 4. 语气专业、简洁、自信
 5. 用第一人称回答（"我"指代范睿峰）
+6. 资料里没有明确写的未来计划、细节或数字，禁止自行补充，不确定就直接说"暂时没有详细说明"
 
 【参考资料】
 {context}
@@ -96,14 +97,16 @@ faithful=1 表示所有事实陈述都有资料依据；faithful=0 表示存在�
 """
 
 JUDGE_PROMPT_PRODUCTION = """你是严格的评估裁判。下面是一个 AI 求职助手对 HR 问题的回答。
-参考资料是候选人范睿峰的【完整知识库】——所有资料文件的全部内容（含个人简介、技能、项目、工作经历、求职意向、HR 高频问答）。
-请逐句检查回答：每个事实性陈述（数字、时间、技能、经历、计划、链接、联系方式）是否都能在完整知识库里找到依据？
+参考资料是候选人范睿峰的资料，包含两部分：
+① 完整知识库（所有资料文件的全部内容：个人简介、技能、项目、工作经历、求职意向、HR 高频问答）
+② 实时 GitHub API 数据（如有；这部分是实时获取的，可信，仓库描述以 API 返回为准）
+请逐句检查回答：每个事实性陈述（数字、时间、技能、经历、计划、链接、联系方式）是否都能在参考资料里找到依据？
 只输出 JSON（不要输出任何其他内容、不要用 markdown 代码块）：
 {{"faithful": 1, "unsupported": ["无依据的陈述1", "无依据的陈述2"]}}
 faithful=1 表示所有事实陈述都有资料依据；faithful=0 表示存在编造或无依据的陈述，把具体句子列进 unsupported（没有就输出空数组）。
 注意：像"很高兴认识你"这类礼貌用语不算事实陈述，不要判为编造。
 
-【完整知识库】
+【参考资料】
 {context}
 
 【问题】
@@ -112,6 +115,30 @@ faithful=1 表示所有事实陈述都有资料依据；faithful=0 表示存在�
 【回答】
 {answer}
 """
+
+
+def live_github_context():
+    """实时 GitHub 数据（与生产 Agent 的 GitHub 工具同源），供裁判核对 GitHub 类回答"""
+    try:
+        u = requests.get(
+            "https://api.github.com/users/GWmorty", timeout=6
+        ).json()
+        rs = requests.get(
+            "https://api.github.com/users/GWmorty/repos?sort=updated&per_page=5",
+            timeout=6,
+        ).json()
+        parts = [
+            f"GitHub 用户 {u.get('login', 'GWmorty')}: "
+            f"public_repos={u.get('public_repos')}, followers={u.get('followers')}"
+        ]
+        for r in rs:
+            parts.append(
+                f"仓库 {r.get('name')}: 描述={r.get('description') or '无'}, "
+                f"语言={r.get('language') or '未知'}"
+            )
+        return "\n".join(parts)
+    except Exception:
+        return ""
 
 
 def retrieve(query, k=3):
@@ -182,7 +209,10 @@ def main():
     for i, q in enumerate(QUESTIONS, 1):
         if args.production:
             answer = ask_production(q, f"eval-{i}")
+            live = live_github_context()
             context = kb_dump()
+            if live:
+                context += "\n\n【实时 GitHub API 数据】\n" + live
         else:
             docs = retrieve(q)
             context = "\n\n".join(docs)
