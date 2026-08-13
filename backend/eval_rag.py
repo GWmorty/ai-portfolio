@@ -163,14 +163,14 @@ def main():
         collection_new = chroma_client.get_or_create_collection(
             name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"},
         )
-        from miniRGA import RAGBot
+        from mini_rag import RAGBot
         RAGBot("./data")  # 空库 → 触发 _ensure_embeddings 用新切块入库
         return  # 重建单独跑，不评估
 
-    # 自举：本地库为空就先入库（复用 miniRGA 的入库逻辑）
+    # 自举：本地库为空就先入库（复用 mini_rag 的入库逻辑）
     if collection.count() == 0:
         print(f"Chroma 为空（count=0），先调 BGE-M3 入库 ./data ...")
-        from miniRGA import RAGBot
+        from mini_rag import RAGBot
         RAGBot("./data")
     mode = "bi-encoder + BGE-Reranker 两阶段" if use_rerank else "bi-encoder 纯检索"
     print(f"知识库就绪：{collection.count()} chunks | 模式：{mode} | 评估 {len(GOLDEN)} 个问题\n")

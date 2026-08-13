@@ -54,7 +54,7 @@ https://github.com/GWmorty
 从零实现的 RAG（检索增强生成）知识库，是这个求职作品集 AI 助手的核心引擎。
 
 ### 技术亮点
-- **切块**：字符切块（计划升级为 RecursiveCharacterTextSplitter）
+- **切块**：markdown H2 标题语义切块（早期是字符切块，实测 Hit@1 从 81% 升到 87%，用数据驱动升级）
 - **embedding**：使用 BGE-M3 模型（1024 维，多语言）
 - **向量数据库**：Chroma 持久化，避免重复调用 API，启动时间从秒级降到毫秒级
 - **检索**：余弦相似度语义检索（取代 Jaccard 字面匹配）
@@ -63,9 +63,9 @@ https://github.com/GWmorty
 
 ### 升级路径
 - Level 1：embedding + Chroma（已完成）
-- Level 2：FastAPI 服务化（进行中）
-- Level 3：Docker 化部署（计划中）
-- Level 4：Rerank、Hybrid Search 等高级技巧（远期）
+- Level 2：FastAPI 服务化（已完成）
+- Level 3：Docker 化部署 + CI/CD（已完成）
+- Level 4：Rerank、Hybrid Search 等高级技巧（已实验 BGE-Reranker，数据证明在小数据集上反而更差，未上线）
 
 ## zero-to-tech 课程项目
 **时间**：2026.05 - 2026.06

@@ -1,9 +1,9 @@
-# server.py - 把 miniRGA 包成 FastAPI 服务
+# server.py - 把 mini_rag 包成 FastAPI 服务
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from miniRGA import RAGBot  # 复用我们写的 RAG 引擎
+from mini_rag import RAGBot  # 复用我们写的 RAG 引擎
 
 
 # ========== 启动时初始化 RAG 引擎 ==========

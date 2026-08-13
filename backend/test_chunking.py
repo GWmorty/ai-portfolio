@@ -1,4 +1,4 @@
-# test_chunking.py — miniRGA 切块逻辑的单元测试（纯函数，不调任何 API）
+# test_chunking.py — mini_rag 切块逻辑的单元测试（纯函数，不调任何 API）
 #
 # 运行：backend 目录下 `pytest test_chunking.py -v`
 # CI 部署前会自动跑一遍全部测试（见 .github/workflows/deploy.yml）
@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from miniRGA import chunk_file, chunk_directory
+from mini_rag import chunk_file, chunk_directory
 
 
 def test_h2_splits_into_sections(tmp_path):

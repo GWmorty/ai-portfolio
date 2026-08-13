@@ -1,6 +1,6 @@
 # config.py — 全局共享配置（常量单一来源，避免多文件硬编码漂移）
 #
-# 之前 CHROMA_PATH / COLLECTION_NAME / base_url / 模型名 在 miniRGA.py、
+# 之前 CHROMA_PATH / COLLECTION_NAME / base_url / 模型名 在 mini_rag.py、
 # server_langgraph.py、eval_rag.py、eval_generation.py 各自硬编码，
 # 改一处容易漏改其他文件。现在统一在这里，其他模块 import 使用。
 
