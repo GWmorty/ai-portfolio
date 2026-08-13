@@ -1,23 +1,29 @@
 # eval_generation.py
 # 生成忠实度评估（LLM-as-judge）
 #
-# 原理：检索 → 生成 → 让第二个 LLM 当裁判，逐句检查回答里每个事实陈述
-#       是否都能在【检索到的资料】里找到依据。
+# 原理：生成回答 → 让第二个 LLM 当裁判，逐句检查回答里每个事实陈述
+#       是否都能在参考资料里找到依据。
 # 指标：忠实度 = 无编造陈述的问题占比；同时列出被判定为「无依据」的句子。
 #
-# 适用范围说明：这里评估的是「RAG 检索 + DeepSeek 生成」这条链路的忠实度
-# （与 server.py/miniRGA 同款 prompt），不是 LangGraph Agent 的完整工具调用行为。
+# 两种模式：
+#   python eval_generation.py                 # 默认：纯 RAG 链路（检索 + 生成，本地复刻）
+#   python eval_generation.py --production    # 生产：直测 LangGraph Agent 的 /ask 回答，
+#                                             # 裁判对照完整知识库（须在 service 容器内跑）
 #
-# 用法（backend 目录下，容器内 /app 同理）：
-#   python eval_generation.py
+# 用法：
+#   纯 RAG 模式任意环境都能跑；--production 模式要在 backend 服务容器内跑
+#   （docker-compose exec backend python eval_generation.py --production），
+#   因为它直接请求 http://localhost:8000/ask。
 #
 # 成本：N 个问题 ×（1 次生成 + 1 次裁判）次 DeepSeek 调用，量级很小。
 
+import argparse
 import json
 import os
 import re
 
 import chromadb
+import requests
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -39,7 +45,7 @@ collection = chroma_client.get_or_create_collection(
     name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"},
 )
 
-# 10 个 HR 高频问题，覆盖不同资料源 + 容易引发编造的「未来计划/数字」类问题
+# 12 个 HR 高频问题，覆盖不同资料源 + 容易引发编造的「未来计划/数字/细节」类问题
 QUESTIONS = [
     "你会什么编程语言？",
     "你做过哪些项目？",
@@ -51,6 +57,8 @@ QUESTIONS = [
     "怎么联系你？",
     "你的 GitHub 上有哪些项目？",
     "你这段空窗期在做什么？",
+    "你的 RAG 知识库现在有多少个 chunk？",
+    "你接下来有什么学习计划？",
 ]
 
 # 与生产提示词保持同构（改生产 SYSTEM_PROMPT 时这里同步改，评估的就是真实链路）
@@ -70,7 +78,7 @@ RAG_PROMPT = """你是一个 AI 求职助手，代表候选人范睿峰回答 HR
 {question}
 """
 
-JUDGE_PROMPT = """你是严格的评估裁判。下面是一个 AI 求职助手对 HR 问题的回答，以及它检索到的参考资料。
+JUDGE_PROMPT = """你是严格的评估裁判。下面是一个 AI 求职助手对 HR 问题的回答，以及它参考的资料。
 请逐句检查回答：每个事实性陈述（数字、时间、技能、经历、计划、链接、联系方式）是否都能在参考资料里找到依据？
 只输出 JSON（不要输出任何其他内容、不要用 markdown 代码块）：
 {{"faithful": 1, "unsupported": ["无依据的陈述1", "无依据的陈述2"]}}
@@ -78,6 +86,24 @@ faithful=1 表示所有事实陈述都有资料依据；faithful=0 表示存在�
 注意：像"很高兴认识你"这类礼貌用语不算事实陈述，不要判为编造。
 
 【参考资料】
+{context}
+
+【问题】
+{question}
+
+【回答】
+{answer}
+"""
+
+JUDGE_PROMPT_PRODUCTION = """你是严格的评估裁判。下面是一个 AI 求职助手对 HR 问题的回答。
+参考资料是候选人范睿峰的【完整知识库】——所有资料文件的全部内容（含个人简介、技能、项目、工作经历、求职意向、HR 高频问答）。
+请逐句检查回答：每个事实性陈述（数字、时间、技能、经历、计划、链接、联系方式）是否都能在完整知识库里找到依据？
+只输出 JSON（不要输出任何其他内容、不要用 markdown 代码块）：
+{{"faithful": 1, "unsupported": ["无依据的陈述1", "无依据的陈述2"]}}
+faithful=1 表示所有事实陈述都有资料依据；faithful=0 表示存在编造或无依据的陈述，把具体句子列进 unsupported（没有就输出空数组）。
+注意：像"很高兴认识你"这类礼貌用语不算事实陈述，不要判为编造。
+
+【完整知识库】
 {context}
 
 【问题】
@@ -98,6 +124,11 @@ def retrieve(query, k=3):
     return res["documents"][0] if res["documents"] else []
 
 
+def kb_dump():
+    docs = collection.get(include=["documents"])["documents"] or []
+    return "\n\n".join(docs)
+
+
 def generate(question, context):
     prompt = RAG_PROMPT.format(context=context, question=question)
     resp = chat_client.chat.completions.create(
@@ -108,8 +139,19 @@ def generate(question, context):
     return resp.choices[0].message.content
 
 
-def judge(question, answer, context):
-    prompt = JUDGE_PROMPT.format(context=context, question=question, answer=answer)
+def ask_production(question, session_id):
+    resp = requests.post(
+        "http://localhost:8000/ask",
+        json={"question": question, "session_id": session_id},
+        timeout=180,
+    )
+    resp.raise_for_status()
+    return resp.json()["answer"]
+
+
+def judge(question, answer, context, production=False):
+    template = JUDGE_PROMPT_PRODUCTION if production else JUDGE_PROMPT
+    prompt = template.format(context=context, question=question, answer=answer)
     resp = chat_client.chat.completions.create(
         model="deepseek-chat",
         messages=[{"role": "user", "content": prompt}],
@@ -118,17 +160,34 @@ def judge(question, answer, context):
     text = resp.choices[0].message.content
     # 裁判偶尔会包一层 ```json 围栏，剥掉再解析
     m = re.search(r"\{.*\}", text, re.S)
-    return json.loads(m.group(0)) if m else {"faithful": 0, "unsupported": [f"裁判输出无法解析: {text[:80]}"], "_raw": text}
+    return json.loads(m.group(0)) if m else {
+        "faithful": 0,
+        "unsupported": [f"裁判输出无法解析: {text[:80]}"],
+    }
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--production",
+        action="store_true",
+        help="直测生产 LangGraph Agent 的 /ask 回答（裁判对照完整知识库）；默认评估纯 RAG 链路",
+    )
+    args = ap.parse_args()
+
+    mode = "生产 Agent (/ask)" if args.production else "纯 RAG 链路"
+    print(f"开始评估 {len(QUESTIONS)} 个问题 | 模式: {mode} | 每个问题 1 次生成 + 1 次裁判...\n")
+
     faithful_count = 0
-    print(f"开始评估 {len(QUESTIONS)} 个问题（每个问题 1 次生成 + 1 次裁判）...\n")
     for i, q in enumerate(QUESTIONS, 1):
-        docs = retrieve(q)
-        context = "\n\n".join(docs)
-        answer = generate(q, context)
-        verdict = judge(q, answer, context)
+        if args.production:
+            answer = ask_production(q, f"eval-{i}")
+            context = kb_dump()
+        else:
+            docs = retrieve(q)
+            context = "\n\n".join(docs)
+            answer = generate(q, context)
+        verdict = judge(q, answer, context, production=args.production)
         faithful = 1 if verdict.get("faithful") == 1 else 0
         faithful_count += faithful
         status = "✅ 忠实" if faithful else "❌ 有编造"
@@ -140,7 +199,7 @@ def main():
     rate = faithful_count / len(QUESTIONS) * 100
     print("=" * 56)
     print(f"忠实度: {faithful_count}/{len(QUESTIONS)} = {rate:.1f}%")
-    print("(忠实 = 回答中所有事实陈述都能在检索到的资料里找到依据)")
+    print("(忠实 = 回答中所有事实陈述都能在参考资料里找到依据)")
 
 
 if __name__ == "__main__":
