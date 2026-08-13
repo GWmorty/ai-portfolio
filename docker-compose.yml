@@ -8,17 +8,19 @@ services:
     build: ./backend
     container_name: ai-portfolio-backend
     ports:
-      - "8000:8000" # 主机 8000 → 容器 8000（Nginx 代理到这里）
+      - "127.0.0.1:8000:8000" # 只绑本机回环：外部只能走 Nginx(80/443)，后端不直接暴露
     env_file:
       - ./backend/.env # API Keys 从 .env 注入（不进镜像）
     volumes:
       - chroma_data:/root/.ai_portfolio # ChromaDB 持久化（容器重启数据不丢）
     restart: unless-stopped # 崩溃自动重启
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      # 真实 AI 链路探测（1 token 最小调用），防「/health 绿灯但聊天已挂」的假绿灯
+      test: ["CMD", "python", "-c", "import requests; r = requests.get('http://localhost:8000/health/ai', timeout=12); exit(0 if r.status_code == 200 else 1)"]
+      interval: 60s
+      timeout: 15s
+      retries: 2
+      start_period: 20s
 
 # 数据卷（持久化 ChromaDB）
 volumes:

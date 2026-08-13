@@ -3,11 +3,12 @@
 # 启动：uvicorn server_langgraph:app --port 8000
 
 import os
+import time
 import requests
 from dotenv import load_dotenv
 from typing import TypedDict, Annotated
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -40,6 +41,12 @@ chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
 collection = chroma_client.get_or_create_collection(
     name=COLLECTION_NAME,
     metadata={"hnsw:space": "cosine"},
+)
+
+# ⭐ 健康检查专用：探测 DeepSeek 链路（不走业务 llm，避免和流式配置耦合）
+health_chat_client = OpenAIClient(
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com",
 )
 
 
@@ -75,33 +82,72 @@ def search_candidate_info(query: str) -> str:
     return "\n\n".join(docs) if docs else "没有找到相关信息"
 
 
+# ⭐ GitHub 结果缓存（TTL 600s）：
+# 未认证的 GitHub API 限流很紧（60 次/小时/IP），服务器出口 IP 是所有访客共用，
+# 连续被问几次 GitHub 就会 403，必须缓存 + 失败兜底
+_GITHUB_CACHE = {}  # key -> (expire_ts, data)
+_GITHUB_TTL = 600
+
+
+def _github_cached(key: str, fetcher):
+    now = time.time()
+    hit = _GITHUB_CACHE.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    try:
+        data = fetcher()
+    except requests.RequestException:
+        # 网络失败/超时：有旧缓存用旧的，没有就返回友好错误（Agent 能据此回答）
+        old = _GITHUB_CACHE.get(key)
+        if old:
+            return old[1]
+        return {"error": "GitHub 查询失败（网络或超时），请稍后再试"}
+    _GITHUB_CACHE[key] = (now + _GITHUB_TTL, data)
+    return data
+
+
 @tool
 def get_github_info(username: str) -> dict:
     """查询 GitHub 用户的基本信息（仓库数、粉丝数）。"""
-    response = requests.get(f"https://api.github.com/users/{username}")
-    if response.status_code != 200:
-        return {"error": f"用户 {username} 不存在"}
-    data = response.json()
-    return {
-        "username": data["login"],
-        "public_repos": data["public_repos"],
-        "followers": data["followers"],
-    }
+    def fetch():
+        response = requests.get(
+            f"https://api.github.com/users/{username}", timeout=6
+        )
+        if response.status_code == 403:
+            return {"error": "GitHub API 限流中，请稍后再试"}
+        if response.status_code != 200:
+            return {"error": f"GitHub 用户 {username} 不存在"}
+        data = response.json()
+        return {
+            "username": data["login"],
+            "public_repos": data["public_repos"],
+            "followers": data["followers"],
+        }
+
+    return _github_cached(username, fetch)
 
 
 @tool
 def get_github_repos(username: str) -> dict:
     """查询 GitHub 用户最近的仓库列表。"""
-    response = requests.get(
-        f"https://api.github.com/users/{username}/repos?sort=updated&per_page=5"
-    )
-    repos = response.json()
-    return {
-        "repos": [
-            {"name": r["name"], "description": r.get("description", "无"), "language": r.get("language", "未知")}
-            for r in repos
-        ]
-    }
+    def fetch():
+        response = requests.get(
+            f"https://api.github.com/users/{username}/repos?sort=updated&per_page=5",
+            timeout=6,
+        )
+        if response.status_code == 403:
+            return {"error": "GitHub API 限流中，请稍后再试"}
+        if response.status_code != 200:
+            return {"error": "GitHub 仓库列表获取失败"}
+        repos = response.json()
+        return {
+            "repos": [
+                {"name": r["name"], "description": r.get("description", "无"), "language": r.get("language", "未知")}
+                for r in repos
+            ]
+        }
+
+    return _github_cached(f"{username}:repos", fetch)
 
 
 tools = [search_candidate_info, get_github_info, get_github_repos]
@@ -192,7 +238,35 @@ class AskResponse(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "agent": "LangGraph + Memory", "model": "deepseek-chat"}
+    """存活探针：进程在不在 + 基础资源状态（不做外部调用，保持轻快）"""
+    return {
+        "status": "ok",
+        "agent": "LangGraph + Memory",
+        "model": "deepseek-chat",
+        "chunks": collection.count(),
+        "keys": {
+            "deepseek": bool(os.getenv("DEEPSEEK_API_KEY")),
+            "siliconflow": bool(os.getenv("SILICONFLOW_API_KEY")),
+        },
+    }
+
+
+@app.get("/health/ai")
+async def health_ai():
+    """真实 AI 链路探测：用 max_tokens=1 的最小调用验证 DeepSeek key 有效。
+    防「假绿灯」——key 失效时 /health 依然 ok、聊天却 401 的那种事故。"""
+    import asyncio
+    try:
+        await asyncio.to_thread(
+            health_chat_client.chat.completions.create,
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+            timeout=10,
+        )
+        return {"status": "ok", "ai": "ok", "model": "deepseek-chat"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"AI 链路异常: {type(e).__name__}")
 
 
 @app.post("/ask", response_model=AskResponse)
