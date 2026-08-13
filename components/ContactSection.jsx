@@ -14,13 +14,13 @@ export default function ContactSection() {
 
         <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
           <a
-            href="mailto:your-email@example.com"
+            href="mailto:2413824669@qq.com"
             className="inline-flex items-center px-6 py-3 rounded-full bg-white text-zinc-900 font-medium hover:bg-zinc-100 transition-colors"
           >
             ✉ 发邮件给我
           </a>
           <a
-            href="https://github.com/your-username"
+            href="https://github.com/GWmorty"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center px-6 py-3 rounded-full border border-zinc-700 text-zinc-200 font-medium hover:border-white hover:text-white transition-colors"
