@@ -221,7 +221,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://szds.site", "https://www.szds.site"],  # 正式域名，收紧 CORS
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

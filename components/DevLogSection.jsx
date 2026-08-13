@@ -75,7 +75,7 @@ export default function DevLogSection() {
       title: "国内 HR 打不开网站",
       problem: "换 DuckDNS 域名后国内要翻墙。",
       cause: "DuckDNS 在国内被 DNS 污染。",
-      fix: "换成正规域名（进行中）。",
+      fix: "换成自有域名 szds.site，配 Let's Encrypt HTTPS，国内可直接访问。",
       lesson: "免费服务有隐藏成本；给国内用户用，得用国内能解析的域名。",
     },
   ];
