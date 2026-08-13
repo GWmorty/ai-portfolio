@@ -8,6 +8,18 @@ import requests
 from dotenv import load_dotenv
 from typing import TypedDict, Annotated
 
+from config import (
+    CHROMA_PATH,
+    COLLECTION_NAME,
+    EMBED_MODEL,
+    CHAT_MODEL,
+    SILICONFLOW_BASE_URL,
+    DEEPSEEK_BASE_URL,
+    GITHUB_USERNAME,
+    GITHUB_CACHE_TTL,
+    TOP_N,
+)
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -28,13 +40,10 @@ from openai import OpenAI as OpenAIClient
 
 load_dotenv()
 
-# ========== RAG 基础设施（和 server_agent.py 相同）==========
-CHROMA_PATH = os.path.expanduser("~/.ai_portfolio/chroma_db")
-COLLECTION_NAME = "knowledge_base"
-
+# ========== RAG 基础设施（路径/集合名/端点统一在 config.py）==========
 embed_client = OpenAIClient(
     api_key=os.getenv("SILICONFLOW_API_KEY"),
-    base_url="https://api.siliconflow.cn/v1",
+    base_url=SILICONFLOW_BASE_URL,
 )
 
 chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
@@ -46,27 +55,26 @@ collection = chroma_client.get_or_create_collection(
 # ⭐ 健康检查专用：探测 DeepSeek 链路（不走业务 llm，避免和流式配置耦合）
 health_chat_client = OpenAIClient(
     api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com",
+    base_url=DEEPSEEK_BASE_URL,
 )
 
 
 def get_embedding(text):
-    response = embed_client.embeddings.create(model="BAAI/bge-m3", input=text)
+    response = embed_client.embeddings.create(model=EMBED_MODEL, input=text)
     return response.data[0].embedding
 
 
 # ========== LLM ==========
 llm = ChatOpenAI(
-    model="deepseek-chat",
+    model=CHAT_MODEL,
     api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com",
+    base_url=DEEPSEEK_BASE_URL,
     temperature=0,
     streaming=True,  # ⭐ 开启 token 级别流式（逐字输出）
 )
 
 
-# ========== 工具（RAG + GitHub，三个工具）==========
-GITHUB_USERNAME = "GWmorty"
+# ========== 工具（RAG + GitHub，三个工具；GitHub 用户名在 config.py）==========
 
 
 @tool
@@ -75,7 +83,7 @@ def search_candidate_info(query: str) -> str:
     query_embedding = get_embedding(query)
     results = collection.query(
         query_embeddings=[query_embedding],
-        n_results=3,
+        n_results=TOP_N,
         include=["documents"],
     )
     docs = results["documents"][0] if results["documents"] else []
@@ -86,7 +94,6 @@ def search_candidate_info(query: str) -> str:
 # 未认证的 GitHub API 限流很紧（60 次/小时/IP），服务器出口 IP 是所有访客共用，
 # 连续被问几次 GitHub 就会 403，必须缓存 + 失败兜底
 _GITHUB_CACHE = {}  # key -> (expire_ts, data)
-_GITHUB_TTL = 600
 
 
 def _github_cached(key: str, fetcher):
@@ -102,7 +109,7 @@ def _github_cached(key: str, fetcher):
         if old:
             return old[1]
         return {"error": "GitHub 查询失败（网络或超时），请稍后再试"}
-    _GITHUB_CACHE[key] = (now + _GITHUB_TTL, data)
+    _GITHUB_CACHE[key] = (now + GITHUB_CACHE_TTL, data)
     return data
 
 
@@ -208,6 +215,10 @@ workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", END:
 workflow.add_edge("tools", "agent")  # 工具执行完回到 agent（循环）
 
 print("初始化 LangGraph Agent（含 Memory）...")
+# ⭐ Memory：进程内 MemorySaver（checkpointer）。
+# 取舍说明：容器重启 / CI 重建后访客对话记忆会清空——求职站的访客会话是短时的，
+# 单 worker 部署下可接受；将来若要多 worker 或需要跨重启持久记忆，
+# 再换 SQLite checkpointer（文件放 chroma 同一个卷里）。
 agent_graph = workflow.compile(checkpointer=MemorySaver()) # ⭐ 加 checkpointer
 print("LangGraph Agent 就绪（支持多轮对话）！\n")
 
@@ -243,7 +254,7 @@ def health():
     return {
         "status": "ok",
         "agent": "LangGraph + Memory",
-        "model": "deepseek-chat",
+        "model": CHAT_MODEL,
         "chunks": collection.count(),
         "keys": {
             "deepseek": bool(os.getenv("DEEPSEEK_API_KEY")),
@@ -260,12 +271,12 @@ async def health_ai():
     try:
         await asyncio.to_thread(
             health_chat_client.chat.completions.create,
-            model="deepseek-chat",
+            model=CHAT_MODEL,
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=1,
             timeout=10,
         )
-        return {"status": "ok", "ai": "ok", "model": "deepseek-chat"}
+        return {"status": "ok", "ai": "ok", "model": CHAT_MODEL}
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"AI 链路异常: {type(e).__name__}")
 

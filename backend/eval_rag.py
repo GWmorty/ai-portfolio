@@ -16,18 +16,23 @@ from dotenv import load_dotenv
 import chromadb
 from openai import OpenAI
 
+from config import (
+    CHROMA_PATH,
+    COLLECTION_NAME,
+    EMBED_MODEL,
+    RERANK_MODEL,
+    SILICONFLOW_BASE_URL,
+)
+
 # Windows 控制台默认 GBK，遇到 ✓/⚠/中文会 UnicodeEncodeError，强制 UTF-8
 sys.stdout.reconfigure(encoding="utf-8")
 
 load_dotenv()
 
-# ========== 检索器（与 server_langgraph.py 完全一致，评的就是线上那个）==========
-CHROMA_PATH = os.path.expanduser("~/.ai_portfolio/chroma_db")
-COLLECTION_NAME = "knowledge_base"
-
+# ========== 检索器（与 server_langgraph.py 完全一致，评的就是线上那个；常量在 config.py）==========
 embed_client = OpenAI(
     api_key=os.getenv("SILICONFLOW_API_KEY"),
-    base_url="https://api.siliconflow.cn/v1",
+    base_url=SILICONFLOW_BASE_URL,
 )
 chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
 collection = chroma_client.get_or_create_collection(
@@ -36,17 +41,17 @@ collection = chroma_client.get_or_create_collection(
 
 
 def get_embedding(text):
-    r = embed_client.embeddings.create(model="BAAI/bge-m3", input=text)
+    r = embed_client.embeddings.create(model=EMBED_MODEL, input=text)
     return r.data[0].embedding
 
 
 def rerank(query, documents, top_n=None):
     """调硅基流动 BGE-Reranker（cross-encoder）给文档重排。返回 [(orig_index, score), ...] 降序。"""
     resp = requests.post(
-        "https://api.siliconflow.cn/v1/rerank",
+        f"{SILICONFLOW_BASE_URL}/rerank",
         headers={"Authorization": f"Bearer {os.getenv('SILICONFLOW_API_KEY')}"},
         json={
-            "model": "BAAI/bge-reranker-v2-m3",
+            "model": RERANK_MODEL,
             "query": query,
             "documents": documents,
             "return_top": top_n,

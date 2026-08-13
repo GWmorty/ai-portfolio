@@ -4,13 +4,19 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from openai import OpenAIError
 
+from config import (
+    CHROMA_PATH,
+    COLLECTION_NAME,
+    EMBED_MODEL,
+    SILICONFLOW_BASE_URL,
+    DEEPSEEK_BASE_URL,
+)
+
 load_dotenv()
 
-# ⭐ Chroma 配置
+# ⭐ Chroma 路径/集合名统一在 config.py
 # 注意：chroma_db 必须存在项目目录外（~/.ai_portfolio/chroma_db）
 # 否则 Next.js dev server 会监控到 sqlite3 文件变化，触发无限刷新
-CHROMA_PATH = os.path.expanduser("~/.ai_portfolio/chroma_db")
-COLLECTION_NAME = "knowledge_base"
 
 
 # ========== 切块部分 ==========
@@ -85,7 +91,7 @@ def chunk_directory(dir_path, chunk_size=300):
 
 def get_embedding(text, client):
     """调硅基流动 BGE-M3，返回 1024 维向量"""
-    response = client.embeddings.create(model="BAAI/bge-m3", input=text)
+    response = client.embeddings.create(model=EMBED_MODEL, input=text)
     return response.data[0].embedding
 
 
@@ -98,11 +104,11 @@ class RAGBot:
         # 2. 两个 client
         self.embed_client = OpenAI(
             api_key=os.getenv("SILICONFLOW_API_KEY"),
-            base_url="https://api.siliconflow.cn/v1"
+            base_url=SILICONFLOW_BASE_URL
         )
         self.chat_client = OpenAI(
             api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url="https://api.deepseek.com"
+            base_url=DEEPSEEK_BASE_URL
         )
 
         # ⭐ 3. 新增：Chroma 持久化 client
@@ -134,7 +140,7 @@ class RAGBot:
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i + batch_size]
             response = self.embed_client.embeddings.create(
-                model="BAAI/bge-m3",
+                model=EMBED_MODEL,
                 input=batch  # 注意这里传的是列表
             )
             # response.data 按 input 顺序返回

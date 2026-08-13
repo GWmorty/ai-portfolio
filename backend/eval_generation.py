@@ -27,18 +27,25 @@ import requests
 from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
+from config import (
+    CHROMA_PATH,
+    COLLECTION_NAME,
+    EMBED_MODEL,
+    CHAT_MODEL,
+    SILICONFLOW_BASE_URL,
+    DEEPSEEK_BASE_URL,
+    GITHUB_USERNAME,
+)
 
-CHROMA_PATH = os.path.expanduser("~/.ai_portfolio/chroma_db")
-COLLECTION_NAME = "knowledge_base"
+load_dotenv()
 
 embed_client = OpenAI(
     api_key=os.getenv("SILICONFLOW_API_KEY"),
-    base_url="https://api.siliconflow.cn/v1",
+    base_url=SILICONFLOW_BASE_URL,
 )
 chat_client = OpenAI(
     api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com",
+    base_url=DEEPSEEK_BASE_URL,
 )
 chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
 collection = chroma_client.get_or_create_collection(
@@ -121,14 +128,14 @@ def live_github_context():
     """实时 GitHub 数据（与生产 Agent 的 GitHub 工具同源），供裁判核对 GitHub 类回答"""
     try:
         u = requests.get(
-            "https://api.github.com/users/GWmorty", timeout=6
+            f"https://api.github.com/users/{GITHUB_USERNAME}", timeout=6
         ).json()
         rs = requests.get(
-            "https://api.github.com/users/GWmorty/repos?sort=updated&per_page=5",
+            f"https://api.github.com/users/{GITHUB_USERNAME}/repos?sort=updated&per_page=5",
             timeout=6,
         ).json()
         parts = [
-            f"GitHub 用户 {u.get('login', 'GWmorty')}: "
+            f"GitHub 用户 {u.get('login', GITHUB_USERNAME)}: "
             f"public_repos={u.get('public_repos')}, followers={u.get('followers')}"
         ]
         for r in rs:
@@ -142,7 +149,7 @@ def live_github_context():
 
 
 def retrieve(query, k=3):
-    emb = embed_client.embeddings.create(model="BAAI/bge-m3", input=query)
+    emb = embed_client.embeddings.create(model=EMBED_MODEL, input=query)
     res = collection.query(
         query_embeddings=[emb.data[0].embedding],
         n_results=k,
@@ -159,7 +166,7 @@ def kb_dump():
 def generate(question, context):
     prompt = RAG_PROMPT.format(context=context, question=question)
     resp = chat_client.chat.completions.create(
-        model="deepseek-chat",
+        model=CHAT_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
     )
@@ -180,7 +187,7 @@ def judge(question, answer, context, production=False):
     template = JUDGE_PROMPT_PRODUCTION if production else JUDGE_PROMPT
     prompt = template.format(context=context, question=question, answer=answer)
     resp = chat_client.chat.completions.create(
-        model="deepseek-chat",
+        model=CHAT_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
     )

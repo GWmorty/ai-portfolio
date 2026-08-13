@@ -18,3 +18,4 @@ langchain-openai==1.4.3   # LangChain 的 OpenAI/DeepSeek 集成
 langchain-core==1.5.3     # LangChain 核心（流式行为敏感，务必锁死）
 langgraph==1.2.10         # LangGraph（白盒 Agent + Memory）
 requests==2.34.2          # HTTP 请求（GitHub API 等）
+pytest==9.1.1             # 测试框架（CI 部署前跑，见 deploy.yml 门禁）
