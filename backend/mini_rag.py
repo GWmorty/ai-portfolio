@@ -228,6 +228,6 @@ class RAGBot:
 
 if __name__ == "__main__":
     # 命令行测试入口（用于调试，不启动 Web 服务）
-    # 正式使用请跑：uvicorn server:app --reload --port 8000
+    # 正式使用请跑：uvicorn server_langgraph:app --port 8000
     bot = RAGBot("./data")
     bot.ask("范睿峰会什么编程语言？")
