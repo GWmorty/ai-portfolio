@@ -8,6 +8,7 @@
 
 import json
 import os
+import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -128,3 +129,35 @@ def test_stream_direct_answer_flush(client_direct):
         if obj.get("type") == "token":
             tokens.append(obj.get("content", ""))
     assert "".join(tokens) == "你好，我是范睿峰。"
+
+
+# ---- 访客观测：SQLite 日志 + /stats 聚合 ----
+
+def test_stats_counts_real_visitors_only(client_with_tool, tmp_path, monkeypatch):
+    # eval-%（评估）/ smoke-%（冒烟）会话不计入公开统计
+    monkeypatch.setattr(server_langgraph, "STATS_DB_PATH", str(tmp_path / "stats.db"))
+    client_with_tool.post("/ask", json={"question": "项目", "session_id": "hr-1"})
+    client_with_tool.post("/ask", json={"question": "项目", "session_id": "eval-abc-1"})
+    client_with_tool.post("/ask", json={"question": "项目", "session_id": "smoke-x"})
+    r = client_with_tool.get("/stats")
+    assert r.status_code == 200
+    assert r.json() == {"questions": 1, "visitors": 1}
+
+
+def test_stats_empty_db_returns_zero(client_with_tool, tmp_path, monkeypatch):
+    monkeypatch.setattr(server_langgraph, "STATS_DB_PATH", str(tmp_path / "stats.db"))
+    r = client_with_tool.get("/stats")
+    assert r.json() == {"questions": 0, "visitors": 0}
+
+
+def test_stream_log_records_tools_and_final_answer(client_with_tool, tmp_path, monkeypatch):
+    # 流式日志：工具集合从 tool_start 事件提取；answer 只累计真答案（英文前奏不得混入）
+    db = str(tmp_path / "stats.db")
+    monkeypatch.setattr(server_langgraph, "STATS_DB_PATH", db)
+    client_with_tool.post("/ask/stream", json={"question": "项目", "session_id": "hr-2"})
+    rows = sqlite3.connect(db).execute("SELECT status, tools, answer FROM ask_log").fetchall()
+    assert len(rows) == 1
+    status, tools, answer = rows[0]
+    assert status == "ok"
+    assert tools == "search_candidate_info"
+    assert answer == "我做过 AI 作品集。"

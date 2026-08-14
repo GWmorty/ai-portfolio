@@ -65,8 +65,21 @@ npm run dev
 cd backend && .venv/Scripts/python eval_rag.py            # 检索质量
 cd backend && .venv/Scripts/python eval_generation.py     # 生成忠实度
 
-# 跑测试（CI 门禁同款，共 14 个）
+# 跑测试（CI 门禁同款，共 17 个）
 cd backend && .venv/Scripts/python -m pytest -q
+```
+
+## 访客观测（轻量自研）
+
+每次提问写入 SQLite（`stats.db`，与 Chroma 同 Docker 卷持久化）：时间、问题、会话、
+命中的工具、延迟、最终回答、状态（ok / aborted 中断 / error）。
+
+- **隐私边界**：公开接口 `/api/stats` 只返回聚合计数（首页展示"已有 N 位访客提过
+  M 个问题"），不暴露访客问题原文；`eval-%` / `smoke-%` 前缀会话不计入。
+- **看访客在问什么**（服务器上，反向优化资料的依据）：
+
+```bash
+docker exec ai-portfolio-backend python -c "import sqlite3; [print(r) for r in sqlite3.connect('/root/.ai_portfolio/stats.db').execute(\"SELECT substr(ts,1,10), session_id, latency_ms, tools, question FROM ask_log ORDER BY id DESC LIMIT 30\")]"
 ```
 
 ## 部署须知（三个非显然的坑）

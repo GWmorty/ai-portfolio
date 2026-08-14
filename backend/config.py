@@ -27,3 +27,6 @@ GITHUB_CACHE_TTL = 600  # 结果缓存秒数（未认证 API 限流 60 次/小�
 
 # ========== 检索 ==========
 TOP_N = 3  # search_candidate_info 默认召回数（线上 eval 按 top3 命中率算）
+
+# ========== 访客观测（SQLite，与 Chroma 同卷持久化；环境变量可覆盖，测试用）==========
+STATS_DB_PATH = os.path.expanduser(os.getenv("STATS_DB_PATH", "~/.ai_portfolio/stats.db"))

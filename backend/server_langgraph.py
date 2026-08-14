@@ -4,7 +4,11 @@
 
 import os
 import time
+import json
+import sqlite3
+import threading
 import requests
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from typing import TypedDict, Annotated
 
@@ -18,6 +22,7 @@ from config import (
     GITHUB_USERNAME,
     GITHUB_CACHE_TTL,
     TOP_N,
+    STATS_DB_PATH,
 )
 
 from fastapi import FastAPI, HTTPException
@@ -223,6 +228,57 @@ agent_graph = workflow.compile(checkpointer=MemorySaver()) # ⭐ 加 checkpointe
 print("LangGraph Agent 就绪（支持多轮对话）！\n")
 
 
+# ========== 访客观测（轻量自研）：每次提问写 SQLite，与 Chroma 同卷持久化 ==========
+# 隐私边界：公开 /stats 只返回聚合计数，访客问题原文不对外；
+#           想看访客在问什么，SSH 到服务器查库（命令见 README「访客观测」）。
+# 口径：eval-%（评估脚本）/ smoke-%（冒烟测试）前缀的会话不计入统计。
+_stats_lock = threading.Lock()
+
+_ASK_LOG_DDL = """CREATE TABLE IF NOT EXISTS ask_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    status TEXT NOT NULL,
+    latency_ms INTEGER,
+    answer TEXT,
+    tools TEXT
+)"""
+
+
+def _log_ask(session_id, question, status, latency_ms, answer="", tools=""):
+    with _stats_lock:
+        conn = sqlite3.connect(STATS_DB_PATH, timeout=5)
+        try:
+            conn.execute(_ASK_LOG_DDL)
+            conn.execute(
+                "INSERT INTO ask_log (ts, session_id, question, status, latency_ms, answer, tools)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (
+                    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    session_id, question, status, latency_ms, answer, tools,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _stats_counts():
+    """聚合计数（公开）：成功回答的问题数 + 去重访客数（按 session_id 近似）"""
+    with _stats_lock:
+        conn = sqlite3.connect(STATS_DB_PATH, timeout=5)
+        try:
+            conn.execute(_ASK_LOG_DDL)
+            questions, visitors = conn.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT session_id) FROM ask_log"
+                " WHERE status='ok' AND session_id NOT LIKE 'eval-%' AND session_id NOT LIKE 'smoke-%'"
+            ).fetchone()
+            return {"questions": questions, "visitors": visitors}
+        finally:
+            conn.close()
+
+
 # ========== FastAPI 应用 ==========
 app = FastAPI(
     title="范睿峰 AI 求职助手（LangGraph 版）",
@@ -283,15 +339,30 @@ async def health_ai():
         raise HTTPException(status_code=503, detail=f"AI 链路异常: {type(e).__name__}")
 
 
+@app.get("/stats")
+def stats_endpoint():
+    """公开聚合计数（首页社会证明用）。只返回数量，不含访客问题原文。"""
+    return _stats_counts()
+
+
 @app.post("/ask", response_model=AskResponse)
 async def ask_endpoint(request: AskRequest):
     # 节点 call_model 是 async def，必须用 ainvoke；用同步 invoke 会在
     # LangGraph 1.x 报 TypeError: No synchronous function provided to "agent"
-    result = await agent_graph.ainvoke(
-        {"messages": [HumanMessage(content=request.question)]},
-        config={"configurable": {"thread_id": request.session_id}},
-    )
-    answer = result["messages"][-1].content
+    t0 = time.time()
+    try:
+        result = await agent_graph.ainvoke(
+            {"messages": [HumanMessage(content=request.question)]},
+            config={"configurable": {"thread_id": request.session_id}},
+        )
+        answer = result["messages"][-1].content
+        tools_used = ",".join(sorted({
+            m.name for m in result["messages"] if isinstance(m, ToolMessage)
+        }))
+    except Exception:
+        _log_ask(request.session_id, request.question, "error", int((time.time() - t0) * 1000))
+        raise
+    _log_ask(request.session_id, request.question, "ok", int((time.time() - t0) * 1000), answer, tools_used)
     return AskResponse(answer=answer, agent_used=True)
 
 
@@ -308,58 +379,78 @@ async def ask_stream(request: AskRequest):
         }
         seen_tool_msg = False  # 是否已出现过 ToolMessage（出现后，后续 AIMessageChunk 才是真答案）
         pending = []           # 缓冲"尚未确认是真答案"的 AIMessageChunk 文本（可能是工具前奏）
-        async for chunk in agent_graph.astream(
-            {"messages": [HumanMessage(content=request.question)]},
-            config={"configurable": {"thread_id": request.session_id}},
-            stream_mode=["messages", "updates"],
-        ):
-            mode, payload = chunk  # (stream_mode_name, data)
+        # 访客观测：工具集合 / 答案累计 / 状态（正常结束 ok、访客中断 aborted、异常 error）
+        t0 = time.time()
+        tools_used, answer_parts, status = set(), [], "ok"
+        try:
+            async for chunk in agent_graph.astream(
+                {"messages": [HumanMessage(content=request.question)]},
+                config={"configurable": {"thread_id": request.session_id}},
+                stream_mode=["messages", "updates"],
+            ):
+                mode, payload = chunk  # (stream_mode_name, data)
 
-            if mode == "messages":
-                msg = payload[0]   # (message, metadata) 里的 message
-                is_ai = isinstance(msg, (AIMessageChunk, AIMessage))
-                is_tool = isinstance(msg, ToolMessage)
-                has_text = isinstance(msg.content, str) and bool(msg.content)
-                no_tool_calls = not getattr(msg, "tool_calls", None)
+                if mode == "messages":
+                    msg = payload[0]   # (message, metadata) 里的 message
+                    is_ai = isinstance(msg, (AIMessageChunk, AIMessage))
+                    is_tool = isinstance(msg, ToolMessage)
+                    has_text = isinstance(msg.content, str) and bool(msg.content)
+                    no_tool_calls = not getattr(msg, "tool_calls", None)
 
-                if is_tool:
-                    # 工具结果到了：说明之前缓冲的 AIMessageChunk 是"工具前奏"（如 Let me search...），丢弃
-                    pending = []
-                    seen_tool_msg = True
-                elif is_ai and has_text and no_tool_calls:
-                    if seen_tool_msg:
-                        # 工具之后的 AIMessage = 真正的最终答案，直接透出
-                        yield f"data: {json.dumps({'type': 'token', 'content': msg.content}, ensure_ascii=False)}\n\n"
-                    else:
-                        # 还没见过工具：可能是「不调工具直接答」（真答案），也可能是「工具前奏」。
-                        # 先缓冲，等确认（见 ToolMessage 就丢，流结束没见就 flush）
-                        pending.append(msg.content)
+                    if is_tool:
+                        # 工具结果到了：说明之前缓冲的 AIMessageChunk 是"工具前奏"（如 Let me search...），丢弃
+                        pending = []
+                        seen_tool_msg = True
+                    elif is_ai and has_text and no_tool_calls:
+                        if seen_tool_msg:
+                            # 工具之后的 AIMessage = 真正的最终答案，直接透出
+                            yield f"data: {json.dumps({'type': 'token', 'content': msg.content}, ensure_ascii=False)}\n\n"
+                            answer_parts.append(msg.content)
+                        else:
+                            # 还没见过工具：可能是「不调工具直接答」（真答案），也可能是「工具前奏」。
+                            # 先缓冲，等确认（见 ToolMessage 就丢，流结束没见就 flush）
+                            pending.append(msg.content)
 
-            elif mode == "updates":
-                # payload: {node_name: state_delta}。按节点发工具事件
-                for node, state in (payload.items() if isinstance(payload, dict) else []):
-                    if not isinstance(state, dict):
-                        continue
-                    msgs = state.get("messages") or []
-                    if not msgs:
-                        continue
-                    last = msgs[-1]
-                    if node == "agent":
-                        # agent 节点：LLM 这一步要调工具 → 发 tool_start
-                        for tc in getattr(last, "tool_calls", []) or []:
-                            tool = tc.get("name", "")
-                            args = tc.get("args", {}) or {}
-                            query = args.get("query") or args.get("username") or ""
-                            yield f"data: {json.dumps({'type': 'tool_start', 'tool': tool, 'label': TOOL_LABEL.get(tool, tool), 'query': str(query)[:40]}, ensure_ascii=False)}\n\n"
-                    elif node == "tools":
-                        # tools 节点：ToolMessage 是工具返回值 → 发 tool_end
-                        if isinstance(last, ToolMessage):
-                            tool = getattr(last, "name", "") or ""
-                            out = last.content if isinstance(last.content, str) else str(last.content)
-                            yield f"data: {json.dumps({'type': 'tool_end', 'tool': tool, 'label': TOOL_LABEL.get(tool, tool), 'preview': out[:80]}, ensure_ascii=False)}\n\n"
-        # 流结束：若 pending 还有内容（说明没调工具，那是直接答的真答案），flush
-        if pending:
-            yield f"data: {json.dumps({'type': 'token', 'content': ''.join(pending)}, ensure_ascii=False)}\n\n"
-        yield "data: [DONE]\n\n"
+                elif mode == "updates":
+                    # payload: {node_name: state_delta}。按节点发工具事件
+                    for node, state in (payload.items() if isinstance(payload, dict) else []):
+                        if not isinstance(state, dict):
+                            continue
+                        msgs = state.get("messages") or []
+                        if not msgs:
+                            continue
+                        last = msgs[-1]
+                        if node == "agent":
+                            # agent 节点：LLM 这一步要调工具 → 发 tool_start
+                            for tc in getattr(last, "tool_calls", []) or []:
+                                tool = tc.get("name", "")
+                                args = tc.get("args", {}) or {}
+                                query = args.get("query") or args.get("username") or ""
+                                tools_used.add(tool)
+                                yield f"data: {json.dumps({'type': 'tool_start', 'tool': tool, 'label': TOOL_LABEL.get(tool, tool), 'query': str(query)[:40]}, ensure_ascii=False)}\n\n"
+                        elif node == "tools":
+                            # tools 节点：ToolMessage 是工具返回值 → 发 tool_end
+                            if isinstance(last, ToolMessage):
+                                tool = getattr(last, "name", "") or ""
+                                out = last.content if isinstance(last.content, str) else str(last.content)
+                                yield f"data: {json.dumps({'type': 'tool_end', 'tool': tool, 'label': TOOL_LABEL.get(tool, tool), 'preview': out[:80]}, ensure_ascii=False)}\n\n"
+            # 流结束：若 pending 还有内容（说明没调工具，那是直接答的真答案），flush
+            if pending:
+                answer_parts.append("".join(pending))
+                yield f"data: {json.dumps({'type': 'token', 'content': ''.join(pending)}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+        except GeneratorExit:
+            # 访客中途关闭页面/发新问题断开连接：也记一笔（"问到一半走了"本身是有价值的信号）
+            status = "aborted"
+            raise
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            _log_ask(
+                request.session_id, request.question, status,
+                int((time.time() - t0) * 1000), "".join(answer_parts),
+                ",".join(sorted(tools_used)),
+            )
 
     return StreamingResponse(generate(), media_type="text/event-stream")

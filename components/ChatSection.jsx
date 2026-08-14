@@ -32,6 +32,18 @@ export default function ChatSection() {
   const [sessionId] = useState(
     () => `hr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   );
+  // 访客社会证明计数（公开聚合接口，只含数量，不含问题原文）
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    const url =
+      process.env.NODE_ENV === "development"
+        ? "http://localhost:8000/stats"
+        : "/api/stats";
+    fetch(url)
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setStats)
+      .catch(() => {});
+  }, []);
   // 自动滚动到底部
   const scrollRef = useRef(null);
   useEffect(() => {
@@ -212,6 +224,11 @@ export default function ChatSection() {
           <p className="text-gray-600 text-base md:text-lg">
             HR 直接提问，AI 基于我的真实资料回答（不编造）
           </p>
+          {stats && stats.questions > 0 && (
+            <p className="text-sm text-gray-400 mt-2">
+              已有 {stats.visitors} 位访客向 AI 助手提过 {stats.questions} 个问题
+            </p>
+          )}
         </div>
 
         {/* 对话容器 */}
