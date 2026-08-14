@@ -5,7 +5,10 @@
 #        docker build / npm build 都在「服务器本地」跑，和手动部署完全一样。
 # 【前置】在 GitHub 仓库 Settings → Secrets and variables → Actions 里配 3 个：
 #        SERVER_HOST / SERVER_USER / SSH_PRIVATE_KEY
-# 【门禁】部署前会在容器里跑 pytest（test_*.py），测试挂了立即中止、不发布坏代码。
+# 【门禁】部署前会在容器里跑 pytest（test_*.py），测试挂了立即中止、不发布坏代码；
+#        pytest 容器用临时空目录覆盖挂载 /root/.ai_portfolio，不碰生产 Chroma 卷；
+#        门禁失败会把服务器仓库回滚到部署前 commit，避免"仓库停在被拒 commit、
+#        手工 docker-compose up 绕过门禁"的半部署状态。
 # 【已知限制】backend/data/*.md 改动后需要手动重新入库（Chroma），CI 不会自动做。
 
 name: Deploy to Server
@@ -28,20 +31,32 @@ jobs:
           script: |
             set -e
             cd ~/ai-portfolio
+            PREV=$(git rev-parse HEAD)
+
             git pull origin main
 
-            # ① 后端：构建新镜像并跑测试（挂了立即中止，不发布坏代码）
+            # ① 后端：构建新镜像
             docker-compose build backend
-            docker-compose run --rm backend pytest -q
 
-            # ② 后端：重建容器（CMD=server_langgraph:app）
+            # ② 门禁：pytest 跑在临时空 Chroma 目录上（-v 覆盖挂载，屏蔽 named volume）。
+            #    生产 chroma_data 卷由线上后端持有：sqlite 不允许多写者，且升级
+            #    chromadb 时新版测试容器会先打开生产库触发 schema 迁移——门禁若
+            #    随后失败，旧后端就得面对被新版本迁移过的库。
+            rm -rf /tmp/pytest-chroma && mkdir -p /tmp/pytest-chroma
+            if ! docker-compose run --rm -v /tmp/pytest-chroma:/root/.ai_portfolio backend pytest -q; then
+              echo "⛔ pytest 门禁失败：回滚服务器仓库到 $PREV（新镜像已构建但未部署，本次不发布）"
+              git reset --hard "$PREV"
+              exit 1
+            fi
+
+            # ③ 后端：重建容器（CMD=server_langgraph:app）
             docker-compose up -d --build
 
-            # ③ 前端：重新生成 out/（gitignore，必须本地 build；nvm 非交互 shell 要 source）
+            # ④ 前端：重新生成 out/（gitignore，必须本地 build；nvm 非交互 shell 要 source）
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
             npm run build
 
-            # ④ 清理旧镜像，释放磁盘
+            # ⑤ 清理旧镜像，释放磁盘
             docker image prune -f
             echo "Deploy completed at $(date)"
