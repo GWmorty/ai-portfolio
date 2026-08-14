@@ -80,6 +80,17 @@ def test_ask_endpoint(client_with_tool):
     assert r.json()["answer"] == "模拟答案"
 
 
+def test_ask_rejects_oversized_question(client_with_tool):
+    # 输入长度门禁：超长问题直接 422，不进 Agent（防单次请求烧 LLM token）
+    r = client_with_tool.post("/ask", json={"question": "x" * 501, "session_id": "t"})
+    assert r.status_code == 422
+
+
+def test_stream_rejects_oversized_question(client_with_tool):
+    r = client_with_tool.post("/ask/stream", json={"question": "x" * 501, "session_id": "t"})
+    assert r.status_code == 422
+
+
 def test_stream_token_excludes_preamble_and_tool_leak(client_with_tool):
     r = client_with_tool.post("/ask/stream", json={"question": "项目", "session_id": "t"})
     assert r.status_code == 200

@@ -23,7 +23,7 @@ from config import (
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import json
 
 from langchain_openai import ChatOpenAI
@@ -240,8 +240,9 @@ app.add_middleware(
 
 
 class AskRequest(BaseModel):
-    question: str
-    session_id: str = "default"  # ⭐ 标识对话（相同 = 同一对话，有记忆）
+    # 长度上限：nginx 限流只挡频率，挡不住单次请求体积；超长输入会直接烧 LLM token（校验失败 FastAPI 返回 422）
+    question: str = Field(..., min_length=1, max_length=500)
+    session_id: str = Field(default="default", max_length=100)  # ⭐ 标识对话（相同 = 同一对话，有记忆）
 
 
 class AskResponse(BaseModel):
