@@ -167,7 +167,7 @@ GOLDEN = [
     # ---- profile.md ----
     {"q": "你的学历和学校？",                "expect": {"profile.md"}},
     {"q": "你的联系方式 / 手机号？",         "expect": {"profile.md"}},
-    {"q": "你现在 base 在哪里？",            "expect": {"profile.md"}},
+    {"q": "你现在 base 在哪里？",            "expect": {"profile.md", "faq.md"}},  # faq 补了口语变体条目，两处都是合法来源
     # ---- faq.md（HR 高频行为问题）----
     {"q": "你的三年职业规划是什么？",        "expect": {"faq.md"}},
     {"q": "你为什么转行做 AI？",             "expect": {"faq.md"}},
@@ -180,6 +180,15 @@ GOLDEN = [
     {"q": "你能接受加班吗？",                "expect": {"faq.md"}},
     {"q": "你什么时候能入职？",              "expect": {"faq.md"}},
     {"q": "你有什么想问我的？",              "expect": {"faq.md"}},
+    # ---- faq.md 口语变体（词汇桥接：口语问法 vs 语料书面措辞）----
+    {"q": "你今年多大了？",                  "expect": {"profile.md", "faq.md"}},
+    # ---- portfolio-deep.md（作品集工程深挖，2026-08-14 新增）----
+    {"q": "作品集是怎么部署上线的？",        "expect": {"portfolio-deep.md", "projects.md"}},
+    {"q": "你的 Agent 是怎么设计的？",       "expect": {"portfolio-deep.md"}},
+    {"q": "检索质量是怎么评估的？",          "expect": {"portfolio-deep.md", "projects.md"}},
+    {"q": "做过哪些失败的实验？",            "expect": {"portfolio-deep.md", "projects.md"}},  # projects.md 也记载了 reranker 负结果
+    {"q": "项目踩过什么坑？",                "expect": {"portfolio-deep.md"}},
+    {"q": "流式输出是怎么实现的？",          "expect": {"portfolio-deep.md"}},
 ]
 
 
