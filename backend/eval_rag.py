@@ -8,6 +8,8 @@
 # 用法（backend 目录下）：
 #   .venv/Scripts/python eval_rag.py            # 汇总
 #   .venv/Scripts/python eval_rag.py --verbose  # 额外打印每条召回的 chunk 预览与相似度
+#   .venv/Scripts/python eval_rag.py --rewrite  # 实验：检索前 LLM 改写 query（线上未启用）
+#   .venv/Scripts/python eval_rag.py --hyde     # 实验：检索前 LLM 生成假想文档再 embed（线上未启用）
 
 import os
 import sys
@@ -21,7 +23,9 @@ from config import (
     COLLECTION_NAME,
     EMBED_MODEL,
     RERANK_MODEL,
+    CHAT_MODEL,
     SILICONFLOW_BASE_URL,
+    DEEPSEEK_BASE_URL,
 )
 
 # Windows 控制台默认 GBK，遇到 ✓/⚠/中文会 UnicodeEncodeError，强制 UTF-8
@@ -65,6 +69,49 @@ def rerank(query, documents, top_n=None):
 # 两阶段检索参数
 RECALL_K = 10   # bi-encoder 先召回 top-10
 RERANK_TOP = 5  # cross-encoder 重排后取前 5
+
+
+# ========== 查询改写 / HyDE（实验用，线上未启用）==========
+# 思路：口语化/中英混用的 query（如「base 在哪」）和语料的语义空间有缝隙，
+#       检索前先用 LLM 把 query 变换成更贴近语料风格的文本再 embed。
+#   --rewrite：LLM 把问题改写成规范中文检索查询（快，1 次小生成）
+#   --hyde   ：LLM 先生成一段"假想资料"（Hypothetical Document），用它检索
+chat_client = OpenAI(
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    base_url=DEEPSEEK_BASE_URL,
+)
+
+REWRITE_PROMPT = (
+    "你是检索查询改写器。把下面的 HR 口语化问题（可能中英混杂、指代模糊）"
+    "改写成适合在中文求职简历资料库里做向量检索的规范中文查询，"
+    "把英文/缩写换成对应中文说法。只输出改写后的查询，不要解释。\n\n问题：{q}"
+)
+
+HYDE_PROMPT = (
+    "假设你在为候选人范睿峰的求职知识库补写资料。针对下面的问题，"
+    "直接写一段 60~100 字的中文资料片段作为回答内容"
+    "（具体细节可以合理虚构，风格与简历资料一致；不要标题、不要解释、不要说不知道）。\n\n问题：{q}"
+)
+
+
+def _llm_generate(prompt_template: str, q: str, max_tokens: int) -> str:
+    r = chat_client.chat.completions.create(
+        model=CHAT_MODEL,
+        temperature=0,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt_template.format(q=q)}],
+    )
+    return (r.choices[0].message.content or "").strip()
+
+
+def rewrite_query(q: str) -> str:
+    """query rewrite：口语问题 → 规范中文检索查询"""
+    return _llm_generate(REWRITE_PROMPT, q, max_tokens=100) or q
+
+
+def hyde_doc(q: str) -> str:
+    """HyDE：先生成假想资料片段，用它代替原 query 去 embed"""
+    return _llm_generate(HYDE_PROMPT, q, max_tokens=200) or q
 
 
 def retrieve(query, k=5, use_rerank=False):
@@ -152,6 +199,8 @@ def main():
     verbose = "--verbose" in sys.argv
     rebuild = "--rebuild" in sys.argv
     use_rerank = "--rerank" in sys.argv
+    use_rewrite = "--rewrite" in sys.argv
+    use_hyde = "--hyde" in sys.argv
 
     # 重建：删掉旧 chunk，用新切块策略重新入库（切换切块策略时用）
     if rebuild:
@@ -172,14 +221,33 @@ def main():
         print(f"Chroma 为空（count=0），先调 BGE-M3 入库 ./data ...")
         from mini_rag import RAGBot
         RAGBot("./data")
-    mode = "bi-encoder + BGE-Reranker 两阶段" if use_rerank else "bi-encoder 纯检索"
+    transform = None
+    if use_rewrite and use_hyde:
+        print("--rewrite 和 --hyde 互斥，请只选一个"); return
+    if use_rewrite:
+        transform = rewrite_query
+    elif use_hyde:
+        transform = hyde_doc
+
+    modes = []
+    if use_rerank:
+        modes.append("bi-encoder + BGE-Reranker 两阶段")
+    else:
+        modes.append("bi-encoder 纯检索")
+    if transform is rewrite_query:
+        modes.append("query rewrite (DeepSeek)")
+    elif transform is hyde_doc:
+        modes.append("HyDE 假想文档 (DeepSeek)")
+    mode = " + ".join(modes)
     print(f"知识库就绪：{collection.count()} chunks | 模式：{mode} | 评估 {len(GOLDEN)} 个问题\n")
 
     sums = {"h1": 0, "h3": 0, "h5": 0, "rr": 0.0}
     print(f"{'#':>2} {'H@1':>4} {'H@3':>4} {'H@5':>4} {'RR':>5}  问题")
     print("-" * 60)
     for i, item in enumerate(GOLDEN, 1):
-        ret = retrieve(item["q"], k=RERANK_TOP if use_rerank else 5, use_rerank=use_rerank)
+        q = item["q"]
+        transformed = transform(q) if transform is not None else None  # 检索前变换 query（实验路径）
+        ret = retrieve(transformed or q, k=RERANK_TOP if use_rerank else 5, use_rerank=use_rerank)
         h1 = hit_at_k(ret, item["expect"], 1)
         h3 = hit_at_k(ret, item["expect"], 3)
         h5 = hit_at_k(ret, item["expect"], 5)
@@ -194,6 +262,8 @@ def main():
         mark = "✓" if h3 else "✗"
         print(f"{i:>2}{mark}{h1:>4} {h3:>4} {h5:>4} {rr:>5.2f}  {item['q']}")
         print(f"    期望[{exp}]  召回[{got3}]")
+        if transformed:
+            print(f"    [变换] {transformed}")
         if verbose:
             for m, d, sim in ret[:3]:
                 preview = d[:48].replace("\n", " ")
