@@ -85,13 +85,24 @@ llm = ChatOpenAI(
 @tool
 def search_candidate_info(query: str) -> str:
     """搜索范睿峰的个人信息、技能、项目经历、求职方向、联系方式等。"""
-    query_embedding = get_embedding(query)
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=TOP_N,
-        include=["documents"],
-    )
-    docs = results["documents"][0] if results["documents"] else []
+    try:
+        query_embedding = get_embedding(query)
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=TOP_N,
+            include=["documents"],
+        )
+        docs = results["documents"][0] if results["documents"] else []
+    except Exception as e:
+        # embedding 服务故障（2026-08-23 事故：硅基流动余额耗尽返回 402）：
+        # 返回可读错误而不是抛异常——抛异常会让整条流式回答崩掉（访客看到空白），
+        # 降级成错误文本让 Agent 能礼貌引导访客直接联系，且不会编造资料。
+        return (
+            f"资料检索服务暂时不可用（embedding 服务异常：{type(e).__name__}）。"
+            "请如实告诉访客：资料检索暂时故障，无法回答该问题，"
+            "可直接联系范睿峰：电话 18021080437 / 邮箱 2413824669@qq.com。"
+            "严禁在拿不到资料的情况下编造答案。"
+        )
     return "\n\n".join(docs) if docs else "没有找到相关信息"
 
 
@@ -323,9 +334,12 @@ def health():
 
 @app.get("/health/ai")
 async def health_ai():
-    """真实 AI 链路探测：用 max_tokens=1 的最小调用验证 DeepSeek key 有效。
-    防「假绿灯」——key 失效时 /health 依然 ok、聊天却 401 的那种事故。"""
+    """真实 AI 链路探测：DeepSeek（对话）+ 硅基流动（embedding）各做一次最小调用。
+    防「假绿灯」——key 配置存在 ≠ 可用：2026-08-14 DeepSeek key 失效 401、
+    2026-08-23 硅基流动余额耗尽 402，两次事故里 /health 都依然全绿。
+    任一 Provider 异常即返回 503（docker healthcheck 探测本端点）。"""
     import asyncio
+    results = {}
     try:
         await asyncio.to_thread(
             health_chat_client.chat.completions.create,
@@ -334,9 +348,22 @@ async def health_ai():
             max_tokens=1,
             timeout=10,
         )
-        return {"status": "ok", "ai": "ok", "model": CHAT_MODEL}
+        results["deepseek"] = "ok"
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"AI 链路异常: {type(e).__name__}")
+        results["deepseek"] = type(e).__name__
+    try:
+        await asyncio.to_thread(
+            embed_client.embeddings.create,
+            model=EMBED_MODEL,
+            input=["ping"],
+            timeout=10,
+        )
+        results["siliconflow"] = "ok"
+    except Exception as e:
+        results["siliconflow"] = type(e).__name__
+    if any(v != "ok" for v in results.values()):
+        raise HTTPException(status_code=503, detail=f"AI 链路异常: {results}")
+    return {"status": "ok", "ai": results, "model": CHAT_MODEL}
 
 
 @app.get("/stats")

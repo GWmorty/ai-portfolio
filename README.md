@@ -65,7 +65,7 @@ npm run dev
 cd backend && .venv/Scripts/python eval_rag.py            # 检索质量
 cd backend && .venv/Scripts/python eval_generation.py     # 生成忠实度
 
-# 跑测试（CI 门禁同款，共 17 个）
+# 跑测试（CI 门禁同款，共 18 个）
 cd backend && .venv/Scripts/python -m pytest -q
 ```
 

@@ -161,3 +161,16 @@ def test_stream_log_records_tools_and_final_answer(client_with_tool, tmp_path, m
     assert status == "ok"
     assert tools == "search_candidate_info"
     assert answer == "我做过 AI 作品集。"
+
+
+def test_search_tool_degrades_gracefully_on_embedding_failure(monkeypatch):
+    # 2026-08-23 事故回归：embedding 服务 402（余额耗尽）时，检索工具返回可读降级文案
+    # 而不是抛异常——抛异常会让整条流式回答崩掉，访客只看到空白
+    def boom(text):
+        raise RuntimeError("402 balance insufficient")
+
+    monkeypatch.setattr(server_langgraph, "get_embedding", boom)
+    out = server_langgraph.search_candidate_info.func("测试问题")
+    assert "不可用" in out
+    assert "18021080437" in out  # 必须引导访客直接联系
+    assert "严禁" in out  # 必须约束 Agent 不得编造
